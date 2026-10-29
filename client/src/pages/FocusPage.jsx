@@ -206,7 +206,7 @@ export const FocusPage = ({
       // const url = `http://localhost:5001/api/pomodoro/${currId}/checkpoint?token=${encodeURIComponent(token)}`;
 
 
-            const url = `https://register-complete-acer-fit.trycloudflare.com/api/pomodoro/${currId}/checkpoint?token=${encodeURIComponent(token)}`;
+            const url = `https://tell-profession-reverse-optimum.trycloudflare.com/api/pomodoro/${currId}/checkpoint?token=${encodeURIComponent(token)}`;
 
       if (navigator.sendBeacon) {
         const blob = new Blob([payload], { type: 'application/json' });
