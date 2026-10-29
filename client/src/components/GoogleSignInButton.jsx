@@ -33,12 +33,23 @@ export const GoogleSignInButton = ({
   const [gisLoaded, setGisLoaded] = useState(false);
   const [initError, setInitError] = useState('');
 
-  const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+  const clientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID || '').trim();
 
   // 1. Initialize and render official Google Identity Services button
   useEffect(() => {
+    // Safe runtime diagnostic: confirms configuration status without exposing the actual Client ID
+    const isConfigured = Boolean(clientId && clientId.length > 0);
+    const hasGoogleSuffix = isConfigured && clientId.endsWith('.apps.googleusercontent.com');
+
+    console.log(
+      `[Padhaku Billa Auth Diagnostic] Google Client ID loaded: ${isConfigured ? 'YES' : 'NO'}` +
+        (isConfigured
+          ? ` (length: ${clientId.length}, format: ${hasGoogleSuffix ? 'valid Google Client ID' : 'custom ID'})`
+          : ' (VITE_GOOGLE_CLIENT_ID missing)')
+    );
+
     if (!clientId) {
-      setInitError('VITE_GOOGLE_CLIENT_ID is not configured.');
+      setInitError('VITE_GOOGLE_CLIENT_ID is not configured in Vercel environment.');
       return;
     }
 
