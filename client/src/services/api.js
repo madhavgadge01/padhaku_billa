@@ -1,5 +1,5 @@
 // const API_BASE = 'http://localhost:5001/api';
-const API_BASE = 'https://tell-profession-reverse-optimum.trycloudflare.com/api';
+ const API_BASE = 'https://tell-profession-reverse-optimum.trycloudflare.com/api';
 const getHeaders = () => {
   const token = localStorage.getItem('lifelevel_token');
   return {
@@ -19,6 +19,13 @@ const handleResponse = async (res) => {
 
 export const api = {
   // Auth
+  googleAuth: (credential) =>
+    fetch(`${API_BASE}/auth/google`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ credential }),
+    }).then(handleResponse),
+
   requestOtp: (email, purpose = 'register') =>
     fetch(`${API_BASE}/auth/request-otp`, {
       method: 'POST',

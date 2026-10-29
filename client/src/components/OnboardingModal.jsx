@@ -11,6 +11,7 @@ import {
 import { InstagramIcon, LinkedInIcon } from './SocialIcons.jsx';
 import { sounds } from '../audio/soundEffects.js';
 import { api } from '../services/api.js';
+import { GoogleSignInButton } from './GoogleSignInButton.jsx';
 
 export const OnboardingModal = ({ user, onComplete, onCancel }) => {
   // If user is already authenticated with email, start at Step 2; otherwise start at Step 1 (Email)
@@ -52,8 +53,47 @@ export const OnboardingModal = ({ user, onComplete, onCancel }) => {
   }, [resendCooldown]);
 
   // =========================================================================
-  // STEP 1: REQUEST & VERIFY OTP VIA BREVO
+  // STEP 1: GOOGLE AUTH (PRIMARY) OR BREVO OTP
   // =========================================================================
+  const handleGoogleSuccess = async (credential) => {
+    try {
+      setLoading(true);
+      setErrorMsg('');
+      setInfoMsg('Connecting your Google account...');
+      sounds.playClick();
+
+      const res = await api.googleAuth(credential);
+      if (res.token) {
+        localStorage.setItem('lifelevel_token', res.token);
+      }
+      if (res.user) {
+        setCurrentUser(res.user);
+        if (res.user.name) {
+          setName(res.user.name);
+        }
+        if (res.user.hasCompletedOnboarding) {
+          sounds.playTimerComplete();
+          if (onComplete) onComplete(res.user);
+          return;
+        }
+      }
+
+      sounds.playTimerComplete();
+      setInfoMsg('');
+      setStep(2); // Advance directly to Name & Profile step
+    } catch (err) {
+      setErrorMsg(err.message || 'Google sign-in failed. Please try again.');
+      sounds.playPausePenalty();
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleError = (errMsg) => {
+    setErrorMsg(errMsg || 'Google authentication error.');
+    sounds.playPausePenalty();
+  };
+
   const handleRequestOtp = async (e) => {
     if (e) e.preventDefault();
     if (!email || !email.includes('@')) {
@@ -220,21 +260,42 @@ export const OnboardingModal = ({ user, onComplete, onCancel }) => {
         )}
 
         {/* =========================================================================
-            STEP 1: EMAIL & BREVO OTP VERIFICATION
+            STEP 1: GOOGLE AUTH (PRIMARY) OR EMAIL OTP
             ========================================================================= */}
         {step === 1 && (
-          <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+          <div className="space-y-5 animate-in fade-in slide-in-from-right-4 duration-300">
             <div className="text-center space-y-2">
               <div className="w-14 h-14 mx-auto rounded-full bg-[#E8F5EE] dark:bg-[#1C2E29] text-[#1B3B2F] dark:text-[#A3D9C9] flex items-center justify-center shadow-inner mb-3 border border-[#C8E6D5] dark:border-[#2B5246]">
                 <Mail className="w-6 h-6" />
               </div>
               <h3 className="text-2xl font-black tracking-tight text-[#1C2A24] dark:text-[#F2F7F4]">Sign In or Register</h3>
               <p className="text-xs font-medium text-[#576560] dark:text-[#8BA398] max-w-xs mx-auto">
-                We use secure passwordless login. Enter your email to receive a 6-digit passcode.
+                Continue with your Google account for instant access, or use email verification.
               </p>
             </div>
 
-            <div className="space-y-4">
+            {/* Primary Action: Google Sign-In */}
+            <div className="space-y-3">
+              <GoogleSignInButton
+                onSuccess={handleGoogleSuccess}
+                onError={handleGoogleError}
+                loading={loading}
+                text="continue_with"
+              />
+              <p className="text-[11px] text-center text-[#576560] dark:text-[#8BA398] font-medium">
+                One-click authentication. No password or OTP needed.
+              </p>
+            </div>
+
+            {/* Divider */}
+            <div className="relative my-4 flex items-center justify-center">
+              <div className="border-t border-[#EAE5DD] dark:border-[#253D35] w-full" />
+              <span className="bg-[#FAF8F5] dark:bg-[#162420] px-3 text-[10px] font-black uppercase tracking-wider text-[#8A9791] absolute">
+                or verify with email code
+              </span>
+            </div>
+
+            <div className="space-y-4 pt-1">
               <div>
                 <label className="block text-[11px] font-black uppercase tracking-wider text-[#576560] dark:text-[#8BA398] mb-1.5 ml-1">
                   Email Address

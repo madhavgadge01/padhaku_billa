@@ -8,6 +8,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { checkAndRefreshStreaks } from '../utils/streakEngine.js';
 import { checkAndApplyPetDecay } from '../utils/petSurvivalEngine.js';
 import { normalizeSocialLinks } from '../utils/socialUtils.js';
+import { verifyGoogleIdToken } from '../utils/googleAuth.js';
 
 const router = express.Router();
 
@@ -19,6 +20,111 @@ const createToken = (userId) => {
 const isValidEmail = (email) => {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim());
 };
+
+// =========================================================================
+// 0. GOOGLE SIGN-IN / SIGN-UP (PRIMARY AUTHENTICATION)
+// Verifies Google ID token using official Google OAuth2Client,
+// links or creates accounts securely using stable Google subject ID (sub),
+// and issues standard application JWT session.
+// =========================================================================
+router.post('/google', async (req, res) => {
+  try {
+    const { credential } = req.body;
+    if (!credential) {
+      return res.status(400).json({
+        success: false,
+        message: 'Google ID token credential is required.',
+      });
+    }
+
+    // Verify token using official Google OAuth2Client
+    const googleProfile = await verifyGoogleIdToken(credential);
+
+    const cleanEmail = googleProfile.email;
+    const googleSub = googleProfile.googleId;
+
+    // 1. Look up user by verified Google ID (sub)
+    let user = await User.findOne({ googleId: googleSub });
+
+    if (user) {
+      // Returning Google user: ensure email & avatar are up to date
+      let updated = false;
+      if (!user.isEmailVerified && googleProfile.emailVerified) {
+        user.isEmailVerified = true;
+        updated = true;
+      }
+      if (!user.avatarUrl && googleProfile.avatarUrl) {
+        user.avatarUrl = googleProfile.avatarUrl;
+        updated = true;
+      }
+      if (updated) {
+        await user.save();
+      }
+    } else {
+      // 2. Check if user already exists with this verified email
+      const existingUserByEmail = await User.findOne({ email: cleanEmail });
+
+      if (existingUserByEmail) {
+        // Safe account linking: Only link if Google confirms the email is verified
+        if (!googleProfile.emailVerified) {
+          return res.status(403).json({
+            success: false,
+            message: 'Your Google email is unverified. Cannot safely link account.',
+          });
+        }
+
+        // Link Google ID to existing account; preserve all user progress, coins, streaks, etc.
+        existingUserByEmail.googleId = googleSub;
+        existingUserByEmail.isEmailVerified = true;
+        if (!existingUserByEmail.avatarUrl && googleProfile.avatarUrl) {
+          existingUserByEmail.avatarUrl = googleProfile.avatarUrl;
+        }
+        if (existingUserByEmail.authProvider === 'local') {
+          existingUserByEmail.authProvider = 'google';
+        }
+        await existingUserByEmail.save();
+        user = existingUserByEmail;
+      } else {
+        // 3. Brand new user registering with Google
+        user = new User({
+          googleId: googleSub,
+          email: cleanEmail,
+          name: googleProfile.name,
+          passwordHash: 'google_oauth_account',
+          avatarUrl: googleProfile.avatarUrl,
+          authProvider: 'google',
+          isEmailVerified: true,
+          hasCompletedOnboarding: false, // New users will complete onboarding
+          coins: 0,
+          health: 100,
+        });
+        await user.save();
+      }
+    }
+
+    // Refresh streaks and check pet decay
+    const tzOffset = req.headers['x-timezone-offset'] ? Number(req.headers['x-timezone-offset']) : null;
+    await checkAndRefreshStreaks(user, tzOffset);
+    await checkAndApplyPetDecay(user);
+
+    // Issue application JWT
+    const token = createToken(user._id);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Authenticated successfully with Google!',
+      token,
+      user,
+      isNewUser: !user.hasCompletedOnboarding,
+    });
+  } catch (error) {
+    console.error('[Auth Error] Google Sign-In:', error.message || error);
+    return res.status(401).json({
+      success: false,
+      message: error.message || 'Google authentication failed. Please try again.',
+    });
+  }
+});
 
 // =========================================================================
 // 1. REQUEST OTP FOR SIGNUP OR LOGIN
@@ -285,10 +391,12 @@ router.post('/login', async (req, res) => {
     const cleanEmail = email.toLowerCase().trim();
     const user = await User.findOne({ email: cleanEmail });
 
-    if (!user || user.passwordHash === 'otp_verified_account') {
+    if (!user || user.passwordHash === 'otp_verified_account' || user.passwordHash === 'google_oauth_account') {
       return res.status(400).json({
         success: false,
-        message: 'Invalid credentials. If you registered with OTP, please log in with OTP.',
+        message: user?.googleId
+          ? 'This account was created with Google. Please use Continue with Google.'
+          : 'Invalid credentials. If you registered with OTP, please log in with OTP.',
       });
     }
 

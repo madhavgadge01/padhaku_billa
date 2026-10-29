@@ -24,6 +24,7 @@ import { WeeklyPlanPage } from './pages/WeeklyPlanPage.jsx';
 
 import { AuthModal } from './components/AuthModal.jsx';
 import { OnboardingModal } from './components/OnboardingModal.jsx';
+import { GoogleLogo } from './components/GoogleSignInButton.jsx';
 import { sounds } from './audio/soundEffects.js';
 import { api } from './services/api.js';
 import { getPageFromPath, getPathForPage } from './utils/router.js';
@@ -385,11 +386,22 @@ export function App() {
             <button
               onClick={() => {
                 sounds.playClick();
-                setShowOnboardingModal(true);
+                setShowAuthModal(true);
               }}
-              className="flex items-center space-x-2 bg-[#1B3B2F] hover:bg-[#142C23] text-white px-8 py-3.5 rounded-2xl font-bold text-sm shadow-sm transition-all transform hover:scale-105 cursor-pointer"
+              className="flex items-center space-x-2.5 bg-white dark:bg-[#162420] text-[#1C2A24] dark:text-[#F2F7F4] border border-[#EAE5DD] dark:border-[#253D35] px-7 py-3.5 rounded-2xl font-black text-sm shadow-sm transition-all transform hover:scale-105 cursor-pointer"
             >
-              <span>BEGIN ADVENTURE WITH EMAIL OTP</span>
+              <GoogleLogo className="w-5 h-5" />
+              <span>CONTINUE WITH GOOGLE</span>
+            </button>
+
+            <button
+              onClick={() => {
+                sounds.playClick();
+                setShowAuthModal(true);
+              }}
+              className="flex items-center space-x-2 bg-[#1B3B2F] hover:bg-[#142C23] text-white px-7 py-3.5 rounded-2xl font-bold text-sm shadow-sm transition-all transform hover:scale-105 cursor-pointer"
+            >
+              <span>SIGN IN / REGISTER</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           </div>
