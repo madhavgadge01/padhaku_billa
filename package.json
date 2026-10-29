@@ -1,0 +1,12 @@
+{
+  "name": "lifelevel-pomodoro-rpg",
+  "version": "1.0.0",
+  "description": "Production Full-Stack Gamified Focus RPG Web Application",
+  "scripts": {
+    "dev:server": "npm run dev --prefix server",
+    "dev:client": "npm run dev --prefix client",
+    "dev": "npm run dev:server & npm run dev:client",
+    "start": "npm run dev",
+    "build": "npm run build --prefix client"
+  }
+}

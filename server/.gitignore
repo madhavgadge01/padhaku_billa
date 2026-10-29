@@ -1,0 +1,18 @@
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Dependencies
+node_modules/
+
+# Logs
+logs/
+*.log
+
+# Backups (kept local for safety)
+backups/
+
+# OS and Editor files
+.DS_Store
+
