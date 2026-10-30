@@ -168,7 +168,7 @@ export const StopwatchSaveModal = ({
           <div className="space-y-1.5">
             <label className="text-xs font-black uppercase tracking-wider text-stone-600 dark:text-stone-300 flex items-center space-x-1.5">
               <BookOpen className="w-3.5 h-3.5 text-[#10B981]" />
-              <span>Associate with Subject / Task</span>
+              <span>Associate Task</span>
             </label>
             <select
               value={selectedSubjectId}
@@ -183,7 +183,7 @@ export const StopwatchSaveModal = ({
                   {sub.name} {sub.targetMinutes ? `(${sub.targetMinutes}m goal)` : ''}
                 </option>
               ))}
-              <option value="custom">+ Custom Activity / Other</option>
+              <option value="custom">+ Custom name</option>
             </select>
           </div>
 
@@ -191,61 +191,20 @@ export const StopwatchSaveModal = ({
           {selectedSubjectId === 'custom' && (
             <div className="space-y-1.5 animate-fadeIn">
               <label className="text-xs font-black uppercase tracking-wider text-stone-600 dark:text-stone-300">
-                Custom Activity Name
+                Custom Name
               </label>
               <input
                 type="text"
                 value={customSubjectName}
                 onChange={(e) => setCustomSubjectName(e.target.value)}
-                placeholder="e.g. Evenjo website, Research, Side Project..."
+                placeholder="e.g. Research,English reading"
                 className="w-full px-3.5 py-2.5 rounded-xl bg-stone-50 dark:bg-[#182420] border border-stone-200 dark:border-white/10 text-xs sm:text-sm font-bold text-[#0D1F17] dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#10B981] transition"
               />
             </div>
           )}
 
 
-          <div className="space-y-1.5">
-            <label className="text-xs font-black uppercase tracking-wider text-stone-600 dark:text-stone-300 flex items-center space-x-1.5">
-              <Tag className="w-3.5 h-3.5 text-[#10B981]" />
-              <span>What did you work on? (Description)</span>
-            </label>
-            <input
-              type="text"
-              value={activityDescription}
-              onChange={(e) => setActivityDescription(e.target.value)}
-              placeholder="e.g., Working on Backend, Building authentication API, Studying DSA..."
-              className="w-full px-3.5 py-2.5 rounded-xl bg-stone-50 dark:bg-[#182420] border border-stone-200 dark:border-white/10 text-xs sm:text-sm font-bold text-[#0D1F17] dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#10B981] transition"
-            />
-          </div>
-
-          {/* Quick Suggestions Chips */}
-          <div className="space-y-1.5 pt-0.5">
-            <span className="text-[10px] font-bold text-stone-400 dark:text-stone-500 uppercase tracking-wider">
-              Quick Suggestions:
-            </span>
-            <div className="flex flex-wrap gap-1.5">
-              {SUGGESTIONS.map((sug) => (
-                <button
-                  key={sug}
-                  type="button"
-                  onClick={() => {
-                    sounds.playClick?.();
-                    setActivityDescription(sug);
-                    // If suggestion matches an existing subject name, select it
-                    const match = subjects.find(
-                      (s) => s.name?.toLowerCase() === sug.toLowerCase() || sug.toLowerCase().includes(s.name?.toLowerCase())
-                    );
-                    if (match) {
-                      setSelectedSubjectId(match.id || match._id);
-                    }
-                  }}
-                  className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-stone-100 dark:bg-[#182420] hover:bg-[#E8F7F0] dark:hover:bg-[#1F332A] text-stone-600 dark:text-stone-300 hover:text-[#10B981] dark:hover:text-[#34D399] border border-stone-200/60 dark:border-white/5 transition cursor-pointer"
-                >
-                  {sug}
-                </button>
-              ))}
-            </div>
-          </div>
+     
 
           {/* Error Message */}
           {errorMessage && (
