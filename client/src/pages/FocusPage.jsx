@@ -68,6 +68,14 @@ export const formatMMSS = (totalSeconds) => {
   return `${m}:${sec}`;
 };
 
+export const formatDigitalHMS = (totalSeconds) => {
+  const totalSecs = Math.max(0, Math.floor(totalSeconds || 0));
+  const h = String(Math.floor(totalSecs / 3600)).padStart(2, '0');
+  const m = String(Math.floor((totalSecs % 3600) / 60)).padStart(2, '0');
+  const s = String(totalSecs % 60).padStart(2, '0');
+  return `${h}:${m}:${s}`;
+};
+
 export const FocusPage = ({
   user,
   pet,
@@ -211,6 +219,7 @@ export const FocusPage = ({
   const timerRef = useRef(null);
   const isCompletingRef = useRef(false);
   const countdownTimerRef = useRef(null);
+  const userHasCustomizedDurationRef = useRef(false);
 
   // Stopwatch & Dropdown interaction refs
   const stopwatchBaseAccumulatedRef = useRef(0);
@@ -462,7 +471,7 @@ export const FocusPage = ({
     const subId = subject.id || subject._id;
     const subName = (subject.name || '').trim().toLowerCase();
     const effMins = getEffectiveGoalMinutes(subject);
-    const goalSecs = effMins * 60;
+    const defaultGoalSecs = effMins * 60;
 
     api.getActiveSessions()
       .then((res) => {
@@ -481,27 +490,57 @@ export const FocusPage = ({
             accumulatedElapsedRef.current = acc;
             setAccumulatedSeconds(acc);
 
+            // Authoritative session goal seconds:
+            // Prefer session's totalGoalSeconds or durationMinutes*60, falling back to local totalSecondsRef or default
+            const sessionGoalSecs =
+              match.totalGoalSeconds ||
+              (match.durationMinutes ? match.durationMinutes * 60 : (totalSecondsRef.current || defaultGoalSecs));
+            const sessionDurationMins = match.durationMinutes || Math.round(sessionGoalSecs / 60);
+
             // Remaining seconds toward goal
-            const remSecs = Math.max(0, goalSecs - acc);
+            const remSecs = Math.max(0, sessionGoalSecs - acc);
             setTimeLeft(remSecs);
-            setTotalSeconds(goalSecs);
-            setCustomMinutes(effMins);
+            setTotalSeconds(sessionGoalSecs);
+            totalSecondsRef.current = sessionGoalSecs;
+            setCustomMinutes(sessionDurationMins);
+            customMinutesRef.current = sessionDurationMins;
+            userHasCustomizedDurationRef.current = true;
 
             // Recovered sessions are restored safely as paused ready to resume
             setIsRunning(false);
             setIsPaused(true);
+            isRunningRef.current = false;
+            isPausedRef.current = true;
             setPetFocusState('idle');
             // Every Resume starts a new 25-minute interval counter
             intervalElapsedRef.current = 0;
             setIntervalSeconds(0);
+
+            syncTimerToStorage({
+              sessionId: match._id,
+              totalSeconds: sessionGoalSecs,
+              customMinutes: sessionDurationMins,
+              timeLeft: remSecs,
+              baseAccumulatedSeconds: acc,
+              baseIntervalSeconds: 0,
+              isRunning: false,
+              isPaused: true,
+            });
             return;
           }
         }
 
-        // If no active session found, set fresh goal
-        setTotalSeconds(goalSecs);
-        setTimeLeft(goalSecs);
+        // If no active session found on backend:
+        // Do not reset if timer is currently running, paused, has an active session, or user has customized duration
+        if (isRunningRef.current || isPausedRef.current || sessionIdRef.current || userHasCustomizedDurationRef.current) {
+          return;
+        }
+
+        setTotalSeconds(defaultGoalSecs);
+        totalSecondsRef.current = defaultGoalSecs;
+        setTimeLeft(defaultGoalSecs);
         setCustomMinutes(effMins);
+        customMinutesRef.current = effMins;
         accumulatedElapsedRef.current = 0;
         setAccumulatedSeconds(0);
         intervalElapsedRef.current = 0;
@@ -511,18 +550,25 @@ export const FocusPage = ({
         setPetFocusState('idle');
       })
       .catch(() => {
-        setTotalSeconds(goalSecs);
-        setTimeLeft(goalSecs);
+        if (isRunningRef.current || isPausedRef.current || sessionIdRef.current || userHasCustomizedDurationRef.current) {
+          return;
+        }
+        setTotalSeconds(defaultGoalSecs);
+        totalSecondsRef.current = defaultGoalSecs;
+        setTimeLeft(defaultGoalSecs);
         setCustomMinutes(effMins);
+        customMinutesRef.current = effMins;
       });
   };
 
   // Sync initialSubject prop if passed from parent
   useEffect(() => {
-    if (initialSubject && !isRunning) {
+    if (initialSubject && !isRunningRef.current) {
       setSelectedSubject(initialSubject);
       setSelectedColor(initialSubject.color || '#3B82F6');
-      restoreSubjectProgress(initialSubject);
+      if (!isPausedRef.current && !sessionIdRef.current && !userHasCustomizedDurationRef.current) {
+        restoreSubjectProgress(initialSubject);
+      }
     }
   }, [initialSubject, user?.dailyGoalOverrides, todayDateStr]);
 
@@ -530,7 +576,14 @@ export const FocusPage = ({
   useEffect(() => {
     if (user?.weeklyTimetable && user.weeklyTimetable[todayKey]) {
       setTimetableToday(user.weeklyTimetable[todayKey]);
-      if (!selectedSubject && user.weeklyTimetable[todayKey].length > 0) {
+      if (
+        !selectedSubject &&
+        user.weeklyTimetable[todayKey].length > 0 &&
+        !isRunningRef.current &&
+        !isPausedRef.current &&
+        !sessionIdRef.current &&
+        !userHasCustomizedDurationRef.current
+      ) {
         const firstUnfinished =
           user.weeklyTimetable[todayKey].find(
             (s) => !s.completedDates?.includes(todayDateStr)
@@ -544,7 +597,14 @@ export const FocusPage = ({
         .then((res) => {
           if (res.success && res.todaySchedule?.subjects) {
             setTimetableToday(res.todaySchedule.subjects);
-            if (!selectedSubject && res.todaySchedule.subjects.length > 0) {
+            if (
+              !selectedSubject &&
+              res.todaySchedule.subjects.length > 0 &&
+              !isRunningRef.current &&
+              !isPausedRef.current &&
+              !sessionIdRef.current &&
+              !userHasCustomizedDurationRef.current
+            ) {
               const first = res.todaySchedule.subjects[0];
               setSelectedSubject(first);
               setSelectedColor(first.color || '#3B82F6');
@@ -558,14 +618,24 @@ export const FocusPage = ({
 
   // Sync with activeTask if selected externally
   useEffect(() => {
-    if (!isRunning && activeTask && timerMode === 'focus' && !selectedSubject) {
+    if (
+      !isRunning &&
+      !isPaused &&
+      !sessionIdRef.current &&
+      !userHasCustomizedDurationRef.current &&
+      activeTask &&
+      timerMode === 'focus' &&
+      !selectedSubject
+    ) {
       const mins = getEffectiveGoalMinutes(activeTask);
       setCustomMinutes(mins);
+      customMinutesRef.current = mins;
       setTimeLeft(mins * 60);
       setTotalSeconds(mins * 60);
+      totalSecondsRef.current = mins * 60;
       setSelectedColor(activeTask.colorTag || '#3B82F6');
     }
-  }, [activeTask, timerMode, isRunning, selectedSubject]);
+  }, [activeTask, timerMode, isRunning, isPaused, selectedSubject]);
 
   // Mode Switcher
   const handleModeChange = (mode) => {
@@ -1202,8 +1272,14 @@ export const FocusPage = ({
           sessionIdRef.current = data.sessionId;
           setSessionId(data.sessionId);
         }
-        if (data.customMinutes) setCustomMinutes(data.customMinutes);
-        if (data.totalSeconds) setTotalSeconds(data.totalSeconds);
+        if (data.customMinutes) {
+          setCustomMinutes(data.customMinutes);
+          customMinutesRef.current = data.customMinutes;
+        }
+        if (data.totalSeconds) {
+          setTotalSeconds(data.totalSeconds);
+          totalSecondsRef.current = data.totalSeconds;
+        }
         setTimeLeft(data.timeLeft);
         if (data.baseAccumulatedSeconds) {
           setAccumulatedSeconds(data.baseAccumulatedSeconds);
@@ -1213,6 +1289,7 @@ export const FocusPage = ({
         isPausedRef.current = true;
         setIsRunning(false);
         setIsPaused(true);
+        userHasCustomizedDurationRef.current = true;
       }
     } catch (e) {
       console.warn('Error restoring timer from localStorage:', e);
@@ -1425,10 +1502,12 @@ export const FocusPage = ({
       isCompletingRef.current = false;
 
       const now = Date.now();
-      const remainingSecs = timeLeft > 0 ? timeLeft : (customMinutesRef.current || 25) * 60;
+      const goalSecs = totalSecondsRef.current || (customMinutesRef.current ? customMinutesRef.current * 60 : 1500);
+      const accumulated = accumulatedElapsedRef.current || 0;
+      const remainingSecs = timeLeft > 0 ? timeLeft : Math.max(0, goalSecs - accumulated);
       sessionEndTimestampRef.current = now + remainingSecs * 1000;
       activeSegmentStartRef.current = now;
-      baseAccumulatedRef.current = accumulatedElapsedRef.current || 0;
+      baseAccumulatedRef.current = accumulated;
       baseIntervalRef.current = 0;
       intervalElapsedRef.current = 0;
       setIntervalSeconds(0);
@@ -1601,6 +1680,7 @@ export const FocusPage = ({
     setAccumulatedSeconds(0);
     intervalElapsedRef.current = 0;
     setIntervalSeconds(0);
+    userHasCustomizedDurationRef.current = false;
     const resetDuration = totalSeconds > 0 ? totalSeconds : (customMinutesRef.current || 25) * 60;
     setTimeLeft(resetDuration);
     setPauseCount(0);
@@ -1798,9 +1878,18 @@ export const FocusPage = ({
     const newTotal = h * 3600 + m * 60 + s;
     const finalTotal = newTotal > 0 ? newTotal : 60; // Minimum 1 minute logic
 
+    const newMins = Math.ceil(finalTotal / 60);
     setTotalSeconds(finalTotal);
+    totalSecondsRef.current = finalTotal;
     setTimeLeft(finalTotal);
-    setCustomMinutes(Math.ceil(finalTotal / 60));
+    setCustomMinutes(newMins);
+    customMinutesRef.current = newMins;
+    userHasCustomizedDurationRef.current = true;
+    syncTimerToStorage({
+      totalSeconds: finalTotal,
+      customMinutes: newMins,
+      timeLeft: finalTotal,
+    });
     setActiveEditField(null);
   };
 
@@ -1842,8 +1931,8 @@ export const FocusPage = ({
   const m = Math.floor((timeLeft % 3600) / 60);
   const s = timeLeft % 60;
 
-  // Show hours if > 0 OR if timer is completely idle (allows editing)
-  const showHours = h > 0 || (!isRunning && !isPaused);
+  // Show hours if > 0 OR if duration is >= 1 hour OR if timer is completely idle (allows editing)
+  const showHours = h > 0 || totalSeconds >= 3600 || (!isRunning && !isPaused);
 
   // Radial progress calculation with thick clean circular lines
   const radius = 138;
@@ -2445,6 +2534,36 @@ export const FocusPage = ({
                   )}
                 </div>
               </div>
+
+              {/* Session Metrics Bar (Total Duration, Elapsed Time, Remaining Time, Status) */}
+              {(isRunning || isPaused || accumulatedSeconds > 0) && (
+                <div className="mt-3 w-full max-w-md mx-auto grid grid-cols-2 sm:grid-cols-4 gap-2 px-3 py-2.5 rounded-2xl bg-[#F8FAF9] dark:bg-[#16201C] border border-emerald-900/5 dark:border-white/5 text-[11px] shadow-xs">
+                  <div className="flex flex-col items-center justify-center p-1.5 rounded-xl bg-white dark:bg-[#111A16] border border-emerald-900/5 dark:border-white/5">
+                    <span className="text-[9px] font-extrabold uppercase tracking-wider text-[#64748B] dark:text-[#94A3B8]">Total Duration</span>
+                    <span className="font-mono font-black text-[#0D1F17] dark:text-white mt-0.5">{formatDigitalHMS(totalSeconds)}</span>
+                  </div>
+                  <div className="flex flex-col items-center justify-center p-1.5 rounded-xl bg-white dark:bg-[#111A16] border border-emerald-900/5 dark:border-white/5">
+                    <span className="text-[9px] font-extrabold uppercase tracking-wider text-[#64748B] dark:text-[#94A3B8]">Elapsed Time</span>
+                    <span className="font-mono font-black text-emerald-600 dark:text-[#34D399] mt-0.5">{formatDigitalHMS(accumulatedSeconds)}</span>
+                  </div>
+                  <div className="flex flex-col items-center justify-center p-1.5 rounded-xl bg-white dark:bg-[#111A16] border border-emerald-900/5 dark:border-white/5">
+                    <span className="text-[9px] font-extrabold uppercase tracking-wider text-[#64748B] dark:text-[#94A3B8]">Remaining</span>
+                    <span className="font-mono font-black text-[#0D1F17] dark:text-white mt-0.5">{formatDigitalHMS(timeLeft)}</span>
+                  </div>
+                  <div className="flex flex-col items-center justify-center p-1.5 rounded-xl bg-white dark:bg-[#111A16] border border-emerald-900/5 dark:border-white/5">
+                    <span className="text-[9px] font-extrabold uppercase tracking-wider text-[#64748B] dark:text-[#94A3B8]">Status</span>
+                    <span className={`font-black uppercase tracking-wider mt-0.5 ${
+                      isPaused
+                        ? 'text-amber-500'
+                        : isRunning
+                        ? 'text-emerald-500 animate-pulse'
+                        : 'text-stone-400'
+                    }`}>
+                      {isPaused ? 'PAUSED' : isRunning ? 'IN FLOW' : 'READY'}
+                    </span>
+                  </div>
+                </div>
+              )}
 
               {/* Radial Timer Dial with HUGE Interactive Numbers */}
               <div className="relative z-0 my-8 flex items-center justify-center w-full min-h-[350px] sm:min-h-[380px]">

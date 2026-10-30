@@ -1,10 +1,31 @@
 <!doctype html>
-<html lang="en" data-theme="light">
+<html lang="en" data-theme="dark" class="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Padhaku Billa — Gamified Focus RPG & Productivity</title>
     <meta name="description" content="Level up your study routine with Padhaku Billa — Gamified focus mechanics, interactive 2D mascot, night-friendly daily streaks, and honest progress tracking. Honest with yourself. I track your time, not your lies.👀" />
+
+    <!-- Early Theme Detection: Default to Dark Mode without flicker, preserve manual choice -->
+    <script>
+      (function() {
+        try {
+          var saved = localStorage.getItem('lifelevel_theme');
+          var theme = saved || 'dark';
+          document.documentElement.setAttribute('data-theme', theme);
+          if (theme === 'dark') {
+            document.documentElement.classList.add('dark');
+          } else {
+            document.documentElement.classList.remove('dark');
+          }
+        } catch (e) {}
+      })();
+    </script>
+
+    <!-- Preload Primary and Priority Cat Mascot Videos for Instant Playback -->
+    <link rel="preload" href="/cat_waiting.mp4" as="video" type="video/mp4">
+    <link rel="preload" href="/cat_hungary.mp4" as="video" type="video/mp4">
+
     <!-- Google Fonts: Outfit & Inter & JetBrains Mono -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

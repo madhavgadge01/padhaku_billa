@@ -428,7 +428,7 @@ const UserSchema = new mongoose.Schema(
     theme: {
       type: String,
       enum: ['dark', 'light'],
-      default: 'light',
+      default: 'dark',
     },
   },
   {

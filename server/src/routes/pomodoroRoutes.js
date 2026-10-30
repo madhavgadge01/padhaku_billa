@@ -543,7 +543,7 @@ router.post('/:sessionId/complete', requireAuth, async (req, res) => {
     const todayStudyKey = getStudyDayKey(now, resetTime, tzOffset);
 
     // Finalize active focus duration
-    const maxTotalAllowed = session.durationMinutes * 60;
+    const maxTotalAllowed = session.totalGoalSeconds || (session.durationMinutes * 60);
     if (session.activeSegmentStart) {
       const elapsedSinceSegment = Math.max(
         0,
@@ -736,7 +736,7 @@ router.post('/:sessionId/stop', requireAuth, async (req, res) => {
         0,
         Math.round((now.getTime() - new Date(session.activeSegmentStart).getTime()) / 1000)
       );
-      const maxTotalAllowed = session.durationMinutes * 60;
+      const maxTotalAllowed = session.totalGoalSeconds || (session.durationMinutes * 60);
       const remainingAllowed = Math.max(0, maxTotalAllowed - (session.accumulatedSeconds || 0));
       const verifiedSegment = Math.min(elapsedSinceSegment, remainingAllowed);
 
@@ -746,7 +746,7 @@ router.post('/:sessionId/stop', requireAuth, async (req, res) => {
     }
     const clientElapsed = Number(req.body.elapsedSeconds);
     if (!isNaN(clientElapsed) && clientElapsed > 0) {
-      session.actualSeconds = Math.max(session.actualSeconds || 0, Math.min(clientElapsed, session.durationMinutes * 60));
+      session.actualSeconds = Math.max(session.actualSeconds || 0, Math.min(clientElapsed, session.totalGoalSeconds || (session.durationMinutes * 60)));
     }
     session.actualMinutes = Math.round((session.actualSeconds / 60) * 10) / 10;
     session.lastHeartbeatAt = now;

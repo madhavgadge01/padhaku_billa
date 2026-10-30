@@ -49,7 +49,7 @@ export function App() {
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showOnboardingModal, setShowOnboardingModal] = useState(false);
   const [soundMuted, setSoundMuted] = useState(false);
-  const [theme, setTheme] = useState(() => localStorage.getItem('lifelevel_theme') || 'light');
+  const [theme, setTheme] = useState(() => localStorage.getItem('lifelevel_theme') || 'dark');
 
   // Helper to synchronize theme attribute and classes on DOM
   const applyTheme = (targetTheme) => {
@@ -132,7 +132,7 @@ export function App() {
       if (res.success) {
         setUser(res.user);
         setPet(res.user.pet);
-        const userTheme = res.user.theme || localStorage.getItem('lifelevel_theme') || 'light';
+        const userTheme = res.user.theme || localStorage.getItem('lifelevel_theme') || 'dark';
         setTheme(userTheme);
         applyTheme(userTheme);
 
