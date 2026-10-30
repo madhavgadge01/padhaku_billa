@@ -364,10 +364,7 @@ export function App() {
 
         {/* Hero Section */}
         <div className="flex-1 max-w-4xl mx-auto px-6 py-12 flex flex-col items-center text-center justify-center">
-          <div className="inline-flex items-center space-x-2 bg-[#E8F5EE] dark:bg-[#162420] border border-[#C8E6D5] dark:border-[#2B5246] px-4 py-1.5 rounded-full text-xs font-bold text-[#1B3B2F] dark:text-[#A3D9C9] mb-6">
-           
-            <span>Clean • Minimal • Interactive 2D Mascot • Flexible Streaks</span>
-          </div>
+       
 
           <h1 className="text-4xl sm:text-6xl font-black tracking-tight text-[#1C2A24] dark:text-[#F2F7F4] leading-tight">
             Focus deeply. Build discipline.{' '}
@@ -394,16 +391,7 @@ export function App() {
               <span>CONTINUE WITH GOOGLE</span>
             </button>
 
-            <button
-              onClick={() => {
-                sounds.playClick();
-                setShowAuthModal(true);
-              }}
-              className="flex items-center space-x-2 bg-[#1B3B2F] hover:bg-[#142C23] text-white px-7 py-3.5 rounded-2xl font-bold text-sm shadow-sm transition-all transform hover:scale-105 cursor-pointer"
-            >
-              <span>SIGN IN / REGISTER</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
+            
           </div>
 
           {/* 3 Pillars Preview */}

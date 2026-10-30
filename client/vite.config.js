@@ -46,6 +46,9 @@ export default defineConfig(({ mode }) => {
       'import.meta.env.VITE_GOOGLE_CLIENT_ID': JSON.stringify(googleClientId),
       'import.meta.env.VITE_VAPID_PUBLIC_KEY': JSON.stringify(vapidPublicKey),
     },
+    build: {
+      sourcemap: true,
+    },
     server: {
       port: 5173,
       host: true,

@@ -32,6 +32,22 @@ import {
 
 const TIMER_STORAGE_KEY = 'padhaku_billa_active_timer';
 const TIMER_CHANNEL_NAME = 'padhaku_billa_timer_channel';
+const STOPWATCH_STORAGE_KEY = 'padhaku_billa_stopwatch_state';
+
+const saveStopwatchState = (running, paused, baseAcc, segStart) => {
+  try {
+    const data = {
+      isRunning: running,
+      isPaused: paused,
+      baseAccumulated: baseAcc,
+      segmentStart: segStart,
+      lastUpdated: Date.now(),
+    };
+    localStorage.setItem(STOPWATCH_STORAGE_KEY, JSON.stringify(data));
+  } catch (e) {
+    console.warn('Failed to save stopwatch state:', e);
+  }
+};
 
 export const formatTimerHMS = (totalSeconds) => {
   const totalSecs = Math.max(0, Math.floor(totalSeconds || 0));
@@ -88,8 +104,27 @@ export const FocusPage = ({
     return subject.targetMinutes || 45;
   };
 
-  // Timer modes: 'focus' (25/45/60 min), 'shortBreak' (5 min), 'longBreak' (15 min)
-  const [timerMode, setTimerMode] = useState('focus');
+  // Timer modes: 'focus' (25/45/60 min), 'shortBreak' (5 min), 'longBreak' (15 min), 'stopwatch'
+  const [timerMode, setTimerMode] = useState(() => {
+    try {
+      const rawSw = localStorage.getItem(STOPWATCH_STORAGE_KEY);
+      if (rawSw) {
+        const parsed = JSON.parse(rawSw);
+        const rawPomo = localStorage.getItem(TIMER_STORAGE_KEY);
+        const pomo = rawPomo ? JSON.parse(rawPomo) : null;
+        const isPomoRunning = pomo && (pomo.isRunning || (pomo.sessionEndTimestamp && pomo.sessionEndTimestamp > Date.now()));
+        if (parsed.isRunning && !isPomoRunning) {
+          return 'stopwatch';
+        }
+      }
+    } catch (e) {}
+    return 'focus';
+  });
+
+  // Dedicated Stopwatch State
+  const [stopwatchSeconds, setStopwatchSeconds] = useState(0);
+  const [stopwatchIsRunning, setStopwatchIsRunning] = useState(false);
+  const [stopwatchIsPaused, setStopwatchIsPaused] = useState(false);
 
   // Timetable integration
   const [timetableToday, setTimetableToday] = useState([]);
@@ -98,25 +133,59 @@ export const FocusPage = ({
   const [customSubjectName, setCustomSubjectName] = useState('');
   const [selectedColor, setSelectedColor] = useState('#3B82F6');
 
-  // Duration & Tracking
-  const [customMinutes, setCustomMinutes] = useState(activeTask ? activeTask.durationMinutes : 25);
+  // Duration & Tracking State
+  const initialDuration = activeTask ? activeTask.durationMinutes : 25;
+  const [customMinutes, setCustomMinutes] = useState(initialDuration);
+  const [totalSeconds, setTotalSeconds] = useState(initialDuration * 60);
+  const [timeLeft, setTimeLeft] = useState(initialDuration * 60);
   const [isRunning, setIsRunning] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [sessionId, setSessionId] = useState(null);
   const [pauseCount, setPauseCount] = useState(0);
   const [completedSessionId, setCompletedSessionId] = useState(null);
-  const sessionIdRef = useRef(null);
-  const startSessionPromiseRef = useRef(null);
 
   // 1. Total Accumulated focus time in current focus session / today
   const [accumulatedSeconds, setAccumulatedSeconds] = useState(0);
-  const accumulatedElapsedRef = useRef(0);
 
   // 2. Verified focus time in the current resume-to-break interval (Threshold: 25 mins = 1500s)
   const [intervalSeconds, setIntervalSeconds] = useState(0);
-  const intervalElapsedRef = useRef(0);
 
-  // Active elapsed segment timestamp tracking
+  // Inline Timer Editing State
+  const [activeEditField, setActiveEditField] = useState(null); // 'h', 'm', 's' or null
+  const [inputValue, setInputValue] = useState('');
+
+  // Alarm & authoritative completion state
+  const [isAlarmPlaying, setIsAlarmPlaying] = useState(false);
+  const [isAudioBlocked, setIsAudioBlocked] = useState(false);
+  const [completionData, setCompletionData] = useState(null);
+  const [completionError, setCompletionError] = useState(null);
+  const [isSubmittingCompletion, setIsSubmittingCompletion] = useState(false);
+
+  // Pet action state for Focus Screen: 'idle' | 'studying' | 'happy'
+  const [petFocusState, setPetFocusState] = useState('idle');
+
+  // Break Confirmation Modal State (Before 25 Minutes)
+  const [showBreakConfirmation, setShowBreakConfirmation] = useState(false);
+
+  // 5-Second Countdown Modal State (Start & Resume)
+  const [showCountdownModal, setShowCountdownModal] = useState(false);
+  const [countdownAction, setCountdownAction] = useState('start'); // 'start' | 'resume'
+  const [countdownValue, setCountdownValue] = useState(5);
+
+  // Push Notification state
+  const [pushStatus, setPushStatus] = useState({
+    supported: false,
+    permission: 'default',
+    subscribed: false,
+    loading: false,
+  });
+  const [pushNotice, setPushNotice] = useState(null);
+
+  // Active elapsed segment & timestamp tracking refs (All declared safely AFTER state)
+  const sessionIdRef = useRef(null);
+  const startSessionPromiseRef = useRef(null);
+  const accumulatedElapsedRef = useRef(0);
+  const intervalElapsedRef = useRef(0);
   const activeSegmentStartRef = useRef(null);
   const sessionEndTimestampRef = useRef(null);
   const baseAccumulatedRef = useRef(0);
@@ -126,6 +195,15 @@ export const FocusPage = ({
   const customMinutesRef = useRef(customMinutes);
   const totalSecondsRef = useRef(totalSeconds);
   const timerBroadcastChannelRef = useRef(null);
+  const timerRef = useRef(null);
+  const isCompletingRef = useRef(false);
+  const countdownTimerRef = useRef(null);
+
+  // Stopwatch & Dropdown interaction refs
+  const stopwatchBaseAccumulatedRef = useRef(0);
+  const stopwatchSegmentStartRef = useRef(null);
+  const stopwatchIntervalRef = useRef(null);
+  const subjectMenuRef = useRef(null);
 
   // Keep refs in sync with state
   useEffect(() => {
@@ -141,21 +219,7 @@ export const FocusPage = ({
     totalSecondsRef.current = totalSeconds;
   }, [totalSeconds]);
 
-  // Remaining time in seconds (counts down toward daily goal)
-  const [timeLeft, setTimeLeft] = useState(customMinutes * 60);
-  const [totalSeconds, setTotalSeconds] = useState(customMinutes * 60);
-  const timerRef = useRef(null);
-  const isCompletingRef = useRef(false);
-
-  // Push Notification state
-  const [pushStatus, setPushStatus] = useState({
-    supported: false,
-    permission: 'default',
-    subscribed: false,
-    loading: false,
-  });
-  const [pushNotice, setPushNotice] = useState(null);
-
+  // Check push notification support & permissions on mount
   useEffect(() => {
     getPushNotificationStatus().then((status) => {
       setPushStatus(status);
@@ -207,9 +271,26 @@ export const FocusPage = ({
     }
   };
 
-  // Live browser tab title countdown
+  // Live browser tab title countdown / stopwatch
   useEffect(() => {
     const defaultTitle = 'Padhaku Billa';
+    if (timerMode === 'stopwatch') {
+      const hrs = Math.floor(stopwatchSeconds / 3600);
+      const mins = Math.floor((stopwatchSeconds % 3600) / 60);
+      const secs = stopwatchSeconds % 60;
+      const timeStr = `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+      if (stopwatchIsRunning) {
+        document.title = `⏱️ ${timeStr} | Padhaku Billa`;
+        return;
+      } else if (stopwatchIsPaused) {
+        document.title = `⏸️ ${timeStr} (Paused) | Padhaku Billa`;
+        return;
+      } else {
+        document.title = defaultTitle;
+        return;
+      }
+    }
+
     const hDisplay = Math.floor(timeLeft / 3600);
     if (isRunning && !isPaused) {
       const timeStr = hDisplay > 0 ? formatTimerHMS(timeLeft) : formatMMSS(timeLeft);
@@ -226,7 +307,17 @@ export const FocusPage = ({
     return () => {
       document.title = defaultTitle;
     };
-  }, [isRunning, isPaused, timeLeft, isAlarmPlaying, completionData]);
+  }, [
+    timerMode,
+    stopwatchSeconds,
+    stopwatchIsRunning,
+    stopwatchIsPaused,
+    isRunning,
+    isPaused,
+    timeLeft,
+    isAlarmPlaying,
+    completionData,
+  ]);
 
   // Notify parent of genuine active running state for centralized navigation guard
   const isActivelyRunning = isRunning && !isPaused;
@@ -235,29 +326,6 @@ export const FocusPage = ({
       onTimerRunningChange(isActivelyRunning);
     }
   }, [isActivelyRunning, onTimerRunningChange]);
-
-  // Inline Timer Editing State
-  const [activeEditField, setActiveEditField] = useState(null); // 'h', 'm', 's' or null
-  const [inputValue, setInputValue] = useState('');
-
-  // Alarm & authoritative completion state
-  const [isAlarmPlaying, setIsAlarmPlaying] = useState(false);
-  const [isAudioBlocked, setIsAudioBlocked] = useState(false);
-  const [completionData, setCompletionData] = useState(null);
-  const [completionError, setCompletionError] = useState(null);
-  const [isSubmittingCompletion, setIsSubmittingCompletion] = useState(false);
-
-  // Pet action state for Focus Screen: 'idle' | 'studying' | 'happy'
-  const [petFocusState, setPetFocusState] = useState('idle');
-
-  // Break Confirmation Modal State (Before 25 Minutes)
-  const [showBreakConfirmation, setShowBreakConfirmation] = useState(false);
-
-  // 5-Second Countdown Modal State (Start & Resume)
-  const [showCountdownModal, setShowCountdownModal] = useState(false);
-  const [countdownAction, setCountdownAction] = useState('start'); // 'start' | 'resume'
-  const [countdownValue, setCountdownValue] = useState(5);
-  const countdownTimerRef = useRef(null);
 
   // Check if active subject has an override today
   const isOverriddenToday = Boolean(
@@ -487,9 +555,23 @@ export const FocusPage = ({
 
   // Mode Switcher
   const handleModeChange = (mode) => {
-    if (isRunning) return;
+    // If pomodoro is running and switching between focus and breaks, keep it guarded
+    if (isRunning && (mode === 'shortBreak' || mode === 'longBreak')) return;
     sounds.playClick();
     setTimerMode(mode);
+    if (mode === 'stopwatch') {
+      if (stopwatchIsRunning) {
+        setPetFocusState('studying');
+      } else {
+        setPetFocusState('idle');
+      }
+      return;
+    }
+    // If switching back to focus while pomodoro is already actively running, preserve pomodoro timeLeft
+    if (isRunning && mode === 'focus') {
+      setPetFocusState('studying');
+      return;
+    }
     let mins = 25;
     if (mode === 'focus') {
       mins = selectedSubject
@@ -513,6 +595,199 @@ export const FocusPage = ({
     setPauseCount(0);
     setIsPaused(false);
   };
+
+  // Load and restore stopwatch from localStorage
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STOPWATCH_STORAGE_KEY);
+      if (raw) {
+        const saved = JSON.parse(raw);
+        if (saved && typeof saved === 'object') {
+          const base = typeof saved.baseAccumulated === 'number' ? saved.baseAccumulated : 0;
+          if (saved.isRunning && saved.segmentStart) {
+            const diff = Math.max(0, Math.floor((Date.now() - saved.segmentStart) / 1000));
+            const currentTotal = base + diff;
+            stopwatchBaseAccumulatedRef.current = base;
+            stopwatchSegmentStartRef.current = saved.segmentStart;
+            setStopwatchSeconds(currentTotal);
+            setStopwatchIsRunning(true);
+            setStopwatchIsPaused(false);
+          } else if (saved.isPaused) {
+            stopwatchBaseAccumulatedRef.current = base;
+            stopwatchSegmentStartRef.current = null;
+            setStopwatchSeconds(base);
+            setStopwatchIsRunning(false);
+            setStopwatchIsPaused(true);
+          } else {
+            stopwatchBaseAccumulatedRef.current = 0;
+            stopwatchSegmentStartRef.current = null;
+            setStopwatchSeconds(0);
+            setStopwatchIsRunning(false);
+            setStopwatchIsPaused(false);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Error restoring stopwatch state:', e);
+    }
+  }, []);
+
+  const syncStopwatchNow = useCallback(() => {
+    if (stopwatchSegmentStartRef.current) {
+      const diff = Math.max(0, Math.floor((Date.now() - stopwatchSegmentStartRef.current) / 1000));
+      const currentTotal = stopwatchBaseAccumulatedRef.current + diff;
+      setStopwatchSeconds(currentTotal);
+      saveStopwatchState(true, false, stopwatchBaseAccumulatedRef.current, stopwatchSegmentStartRef.current);
+    }
+  }, []);
+
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        syncStopwatchNow();
+      }
+    };
+    const handlePageShow = () => {
+      syncStopwatchNow();
+    };
+    const handleFocus = () => {
+      syncStopwatchNow();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('pageshow', handlePageShow);
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('pageshow', handlePageShow);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [syncStopwatchNow]);
+
+  useEffect(() => {
+    if (stopwatchIsRunning && stopwatchSegmentStartRef.current) {
+      syncStopwatchNow();
+      stopwatchIntervalRef.current = setInterval(() => {
+        if (stopwatchSegmentStartRef.current) {
+          const diff = Math.max(0, Math.floor((Date.now() - stopwatchSegmentStartRef.current) / 1000));
+          const currentTotal = stopwatchBaseAccumulatedRef.current + diff;
+          setStopwatchSeconds(currentTotal);
+        }
+      }, 500);
+
+      return () => {
+        if (stopwatchIntervalRef.current) {
+          clearInterval(stopwatchIntervalRef.current);
+          stopwatchIntervalRef.current = null;
+        }
+      };
+    } else {
+      if (stopwatchIntervalRef.current) {
+        clearInterval(stopwatchIntervalRef.current);
+        stopwatchIntervalRef.current = null;
+      }
+    }
+  }, [stopwatchIsRunning, syncStopwatchNow]);
+
+  const handleStartStopwatch = () => {
+    sounds.playClick?.();
+    const now = Date.now();
+    stopwatchBaseAccumulatedRef.current = 0;
+    stopwatchSegmentStartRef.current = now;
+    setStopwatchSeconds(0);
+    setStopwatchIsRunning(true);
+    setStopwatchIsPaused(false);
+    saveStopwatchState(true, false, 0, now);
+  };
+
+  const handlePauseStopwatch = () => {
+    sounds.playClick?.();
+    const now = Date.now();
+    const additional = stopwatchSegmentStartRef.current
+      ? Math.max(0, Math.floor((now - stopwatchSegmentStartRef.current) / 1000))
+      : 0;
+    const totalAcc = stopwatchBaseAccumulatedRef.current + additional;
+    stopwatchBaseAccumulatedRef.current = totalAcc;
+    stopwatchSegmentStartRef.current = null;
+    setStopwatchSeconds(totalAcc);
+    setStopwatchIsRunning(false);
+    setStopwatchIsPaused(true);
+    saveStopwatchState(false, true, totalAcc, null);
+  };
+
+  const handleResumeStopwatch = () => {
+    sounds.playClick?.();
+    const now = Date.now();
+    stopwatchSegmentStartRef.current = now;
+    setStopwatchIsRunning(true);
+    setStopwatchIsPaused(false);
+    saveStopwatchState(true, false, stopwatchBaseAccumulatedRef.current, now);
+  };
+
+  const handleResetStopwatch = () => {
+    sounds.playClick?.();
+    stopwatchBaseAccumulatedRef.current = 0;
+    stopwatchSegmentStartRef.current = null;
+    setStopwatchSeconds(0);
+    setStopwatchIsRunning(false);
+    setStopwatchIsPaused(false);
+    saveStopwatchState(false, false, 0, null);
+  };
+
+  // Keep pet state in sync with stopwatch
+  useEffect(() => {
+    if (timerMode === 'stopwatch') {
+      if (stopwatchIsRunning) {
+        setPetFocusState('studying');
+      } else {
+        setPetFocusState('idle');
+      }
+    }
+  }, [timerMode, stopwatchIsRunning]);
+
+  // Close subject menu dropdown when clicking outside
+  useEffect(() => {
+    if (!showSubjectMenu) return;
+    const handleClickOutside = (e) => {
+      if (subjectMenuRef.current && !subjectMenuRef.current.contains(e.target)) {
+        setShowSubjectMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('touchstart', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
+    };
+  }, [showSubjectMenu]);
+
+  // Deduplicated list of today's planned subjects (ensures subjects appear only once)
+  const displaySubjects = React.useMemo(() => {
+    const list = [...(timetableToday || [])];
+    const seenNames = new Set(list.map((s) => (s.name || '').trim().toLowerCase()));
+    const seenIds = new Set(list.map((s) => String(s.id || s._id || '')));
+
+    (tasks || []).forEach((t) => {
+      const cleanName = (t.name || '').trim().toLowerCase();
+      const idStr = String(t._id || t.id || '');
+      if (!seenNames.has(cleanName) && !seenIds.has(idStr)) {
+        list.push({
+          id: t._id || t.id,
+          _id: t._id || t.id,
+          name: t.name,
+          color: t.colorTag || '#3B82F6',
+          colorTag: t.colorTag || '#3B82F6',
+          targetMinutes: t.durationMinutes || 25,
+          completedDates: t.completedDates || [],
+        });
+        seenNames.add(cleanName);
+        seenIds.add(idStr);
+      }
+    });
+
+    return list;
+  }, [timetableToday, tasks]);
 
   // Mutable reference to handleComplete for circular dependency resolution
   const handleCompleteRef = useRef(null);
@@ -1479,6 +1754,12 @@ export const FocusPage = ({
   const activeColorInfo = getSubjectColor(selectedColor);
 
   const isIntervalEligibleForFreeBreak = intervalSeconds >= 1500;
+  const isAnyTimerRunning = timerMode === 'stopwatch' ? stopwatchIsRunning : isRunning;
+
+  // Formatted stopwatch units
+  const swH = String(Math.floor(stopwatchSeconds / 3600)).padStart(2, '0');
+  const swM = String(Math.floor((stopwatchSeconds % 3600) / 60)).padStart(2, '0');
+  const swS = String(stopwatchSeconds % 60).padStart(2, '0');
 
   return (
     <div className="max-w-5xl mx-auto space-y-6 pb-12 select-none">
@@ -1697,10 +1978,10 @@ export const FocusPage = ({
       )}
 
       {/* Mode Selector Pill Tabs */}
-      <div className="flex bg-[#FAF8F5] dark:bg-[#162420] p-1.5 rounded-3xl border border-[#EAE5DD] dark:border-[#253D35] max-w-md mx-auto justify-between shadow-sm relative">
+      <div className="flex bg-[#FAF8F5] dark:bg-[#162420] p-1.5 rounded-3xl border border-[#EAE5DD] dark:border-[#253D35] max-w-xl mx-auto justify-between shadow-sm relative">
         <button
           onClick={() => handleModeChange('focus')}
-          className={`flex-1 py-2 rounded-2xl text-xs font-bold transition cursor-pointer ${
+          className={`flex-1 py-2 sm:py-2.5 px-2 rounded-2xl text-[11px] sm:text-xs font-bold transition cursor-pointer text-center ${
             timerMode === 'focus'
               ? 'bg-[#1B3B2F] text-white shadow-sm'
               : 'text-[#576560] dark:text-[#9EB5AB] hover:text-[#1C2A24]'
@@ -1710,36 +1991,52 @@ export const FocusPage = ({
         </button>
         <button
           onClick={() => handleModeChange('shortBreak')}
-          className={`flex-1 py-2 rounded-2xl text-xs font-bold transition cursor-pointer ${
+          className={`flex-1 py-2 sm:py-2.5 px-2 rounded-2xl text-[11px] sm:text-xs font-bold transition cursor-pointer text-center ${
             timerMode === 'shortBreak'
               ? 'bg-[#1B3B2F] text-white shadow-sm'
               : 'text-[#576560] dark:text-[#9EB5AB] hover:text-[#1C2A24]'
           }`}
         >
-          Short Rest (5m)
+          <span className="hidden sm:inline">Short Rest (5m)</span>
+          <span className="sm:hidden">Short (5m)</span>
         </button>
         <button
           onClick={() => handleModeChange('longBreak')}
-          className={`flex-1 py-2 rounded-2xl text-xs font-bold transition cursor-pointer ${
+          className={`flex-1 py-2 sm:py-2.5 px-2 rounded-2xl text-[11px] sm:text-xs font-bold transition cursor-pointer text-center ${
             timerMode === 'longBreak'
               ? 'bg-[#1B3B2F] text-white shadow-sm'
               : 'text-[#576560] dark:text-[#9EB5AB] hover:text-[#1C2A24]'
           }`}
         >
-          Long Rest (15m)
+          <span className="hidden sm:inline">Long Rest (15m)</span>
+          <span className="sm:hidden">Long (15m)</span>
+        </button>
+        <button
+          onClick={() => handleModeChange('stopwatch')}
+          className={`flex-1 py-2 sm:py-2.5 px-2 rounded-2xl text-[11px] sm:text-xs font-bold transition cursor-pointer text-center ${
+            timerMode === 'stopwatch'
+              ? 'bg-[#1B3B2F] text-white shadow-sm'
+              : 'text-[#576560] dark:text-[#9EB5AB] hover:text-[#1C2A24]'
+          }`}
+        >
+          Stopwatch
         </button>
       </div>
 
       {/* Main Study Deck */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-        {/* LEFT COLUMN: Pomodoro Dial & Subject Selector (7 cols) */}
-        <div className="lg:col-span-7 bg-white dark:bg-[#162420] rounded-3xl border border-[#EAE5DD] dark:border-[#253D35] p-6 sm:p-8 shadow-sm flex flex-col justify-center items-center relative overflow-hidden">
+        {/* LEFT COLUMN: Pomodoro Dial / Stopwatch & Subject Selector (7 cols) */}
+        <div className="lg:col-span-7 bg-white dark:bg-[#162420] rounded-3xl border border-[#EAE5DD] dark:border-[#253D35] p-6 sm:p-8 shadow-sm flex flex-col justify-center items-center relative overflow-visible z-20">
           
           {/* BIG CLICKABLE SUBJECT SELECTOR */}
-          <div className="relative w-full z-10">
+          <div ref={subjectMenuRef} className="relative w-full z-40">
             <div
-              onClick={() => !isRunning && setShowSubjectMenu(!showSubjectMenu)}
-              className={`w-full bg-[#FAF8F5] dark:bg-[#1C2E29] rounded-2xl p-4 border border-[#EAE5DD] dark:border-[#253D35] flex items-center justify-between transition-all ${!isRunning ? 'cursor-pointer hover:border-[#1B3B2F] dark:hover:border-[#A3D9C9]' : 'opacity-80'}`}
+              onClick={() => !isAnyTimerRunning && setShowSubjectMenu(!showSubjectMenu)}
+              className={`w-full bg-[#FAF8F5] dark:bg-[#1C2E29] rounded-2xl p-4 border border-[#EAE5DD] dark:border-[#253D35] flex items-center justify-between transition-all ${
+                !isAnyTimerRunning
+                  ? 'cursor-pointer hover:border-[#1B3B2F] dark:hover:border-[#A3D9C9]'
+                  : 'opacity-80'
+              }`}
             >
               <div className="flex items-center space-x-3">
                 <span
@@ -1756,233 +2053,339 @@ export const FocusPage = ({
                 </div>
               </div>
 
-              {!isRunning && (
+              {!isAnyTimerRunning && (
                 <div className="flex items-center space-x-2">
-                 
                   <div className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-white dark:bg-[#162420] text-xs font-bold text-[#1C2A24] dark:text-[#F2F7F4] border border-[#EAE5DD] dark:border-[#253D35] shadow-xs flex-shrink-0">
                     <span>Change</span>
-                    <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showSubjectMenu ? 'rotate-180' : ''}`} />
+                    <ChevronDown
+                      className={`w-3.5 h-3.5 transition-transform ${
+                        showSubjectMenu ? 'rotate-180' : ''
+                      }`}
+                    />
                   </div>
                 </div>
               )}
             </div>
 
             {/* Popover Subject Menu */}
-            {!isRunning && showSubjectMenu && (
-              <div className="absolute left-0 top-[105%] w-full bg-white dark:bg-[#162420] border border-[#EAE5DD] dark:border-[#253D35] rounded-2xl shadow-xl p-3 space-y-2 animate-in fade-in slide-in-from-top-2 duration-150 z-20">
-                <div className="text-[11px] font-bold text-[#576560] dark:text-[#8BA398] uppercase tracking-wider px-1">
+            {!isAnyTimerRunning && showSubjectMenu && (
+              <div className="absolute left-0 top-[calc(100%+8px)] w-full bg-white dark:bg-[#162420] border-2 border-[#1B3B2F]/20 dark:border-[#34D399]/40 rounded-2xl shadow-2xl p-3.5 space-y-2.5 animate-in fade-in slide-in-from-top-2 duration-150 z-50">
+                <div className="text-[11px] font-extrabold text-[#576560] dark:text-[#8BA398] uppercase tracking-wider px-1">
                   Today's Planned Subjects ({todayKey}):
                 </div>
 
-                {timetableToday.length === 0 ? (
-                  <p className="text-xs text-[#8A9791] px-1 py-1">
-                    No timetable set for today. Pick a task below or study freely.
+                {displaySubjects.length === 0 ? (
+                  <p className="text-xs text-[#8A9791] px-1 py-2">
+                    No timetable set for today. Study freely.
                   </p>
                 ) : (
-                  <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
-                    {timetableToday.map((sub) => {
+                  <div className="space-y-1 max-h-56 overflow-y-auto pr-1">
+                    {displaySubjects.map((sub) => {
                       const effMins = getEffectiveGoalMinutes(sub);
+                      const isSelected =
+                        (selectedSubject && (selectedSubject.id === sub.id || selectedSubject._id === sub.id)) ||
+                        (activeSubjectName && sub.name && activeSubjectName.trim().toLowerCase() === sub.name.trim().toLowerCase());
                       return (
                         <button
-                          key={sub.id}
+                          key={sub.id || sub._id}
                           onClick={() => handleSelectSubject(sub)}
-                          className="w-full flex items-center justify-between p-2 rounded-xl text-xs font-bold hover:bg-[#FAF8F5] dark:hover:bg-[#1C2E29] text-left transition cursor-pointer"
+                          className={`w-full flex items-center justify-between p-2.5 rounded-xl text-xs font-bold text-left transition cursor-pointer ${
+                            isSelected
+                              ? 'bg-[#1B3B2F]/10 dark:bg-[#34D399]/15 text-[#1B3B2F] dark:text-[#34D399] font-black'
+                              : 'hover:bg-[#FAF8F5] dark:hover:bg-[#1C2E29] text-[#1C2A24] dark:text-[#F2F7F4]'
+                          }`}
                         >
-                          <div className="flex items-center space-x-2 truncate">
-                            <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: sub.color }} />
-                            <span className="truncate text-[#1C2A24] dark:text-[#F2F7F4]">{sub.name}</span>
+                          <div className="flex items-center space-x-2.5 truncate">
+                            <span
+                              className="w-3.5 h-3.5 rounded-full flex-shrink-0 shadow-xs"
+                              style={{ backgroundColor: sub.color || sub.colorTag || '#3B82F6' }}
+                            />
+                            <span className="truncate">{sub.name}</span>
                           </div>
-                          <span className="text-[10px] text-[#8A9791] flex-shrink-0">{effMins}m</span>
+                          <span className="text-[10px] text-[#8A9791] flex-shrink-0 font-mono ml-2">
+                            {effMins}m
+                          </span>
                         </button>
                       );
                     })}
                   </div>
                 )}
+              </div>
+            )}
+          </div>
 
-                {/* Standard Quests list */}
-                {tasks.length > 0 && (
-                  <div className="pt-2 border-t border-[#EAE5DD] dark:border-[#253D35]">
-                    <div className="text-[11px] font-bold text-[#576560] dark:text-[#8BA398] uppercase tracking-wider px-1 mb-1">
-                      General tasks:
+          {timerMode === 'stopwatch' ? (
+            <>
+              {/* Stopwatch Status Pill */}
+              <div className="mt-6 w-full max-w-sm flex items-center justify-between px-4 py-2.5 rounded-2xl bg-[#FAF8F5] dark:bg-[#1C2E29] border border-[#EAE5DD] dark:border-[#253D35] text-xs">
+                <div className="flex items-center space-x-2">
+                  <span className="font-bold text-[#1C2A24] dark:text-[#F2F7F4]">Mode:</span>
+                  <span className="font-bold text-[#1B3B2F] dark:text-[#34D399]">Continuous Stopwatch</span>
+                </div>
+                <div className="flex items-center space-x-1.5">
+                  <span
+                    className={`w-2 h-2 rounded-full ${
+                      stopwatchIsRunning
+                        ? 'bg-emerald-500 animate-pulse'
+                        : stopwatchIsPaused
+                        ? 'bg-amber-500'
+                        : 'bg-stone-400'
+                    }`}
+                  />
+                  <span
+                    className={`font-bold text-[11px] ${
+                      stopwatchIsRunning
+                        ? 'text-emerald-600 dark:text-emerald-400'
+                        : stopwatchIsPaused
+                        ? 'text-amber-600 dark:text-amber-400'
+                        : 'text-[#8A9791]'
+                    }`}
+                  >
+                    {stopwatchIsRunning ? 'Counting Up' : stopwatchIsPaused ? 'Paused' : 'Ready'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Dedicated Stopwatch Digital Timer Display */}
+              <div className="my-8 sm:my-10 flex flex-col items-center justify-center w-full min-h-[300px]">
+                <div className="w-full max-w-md bg-[#FAF8F5] dark:bg-[#1C2E29] border border-[#EAE5DD] dark:border-[#253D35] rounded-3xl p-6 sm:p-10 shadow-inner flex flex-col items-center">
+                  <div className="flex items-center justify-center font-mono font-black text-5xl sm:text-7xl tracking-tight text-[#1C2A24] dark:text-[#F2F7F4]">
+                    <div className="flex flex-col items-center min-w-[3.5rem] sm:min-w-[4.5rem]">
+                      <span>{swH}</span>
+                      <span className="text-[10px] sm:text-xs font-bold text-[#8A9791] tracking-widest mt-1">HRS</span>
                     </div>
-                    <div className="space-y-1 max-h-32 overflow-y-auto pr-1">
-                      {tasks.map((t) => (
-                        <button
-                          key={t._id}
-                          onClick={() => handleSelectTaskFallback(t)}
-                          className="w-full flex items-center space-x-2 p-2 rounded-xl text-xs font-bold hover:bg-[#FAF8F5] dark:hover:bg-[#1C2E29] text-left transition cursor-pointer"
-                        >
-                          <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: t.colorTag }} />
-                          <span className="truncate text-[#1C2A24] dark:text-[#F2F7F4]">{t.name}</span>
-                        </button>
-                      ))}
+                    <span className={`text-[#1B3B2F] dark:text-[#34D399] px-1 sm:px-2 -mt-4 ${stopwatchIsRunning ? 'animate-pulse' : ''}`}>:</span>
+                    <div className="flex flex-col items-center min-w-[3.5rem] sm:min-w-[4.5rem]">
+                      <span>{swM}</span>
+                      <span className="text-[10px] sm:text-xs font-bold text-[#8A9791] tracking-widest mt-1">MIN</span>
+                    </div>
+                    <span className={`text-[#1B3B2F] dark:text-[#34D399] px-1 sm:px-2 -mt-4 ${stopwatchIsRunning ? 'animate-pulse' : ''}`}>:</span>
+                    <div className="flex flex-col items-center min-w-[3.5rem] sm:min-w-[4.5rem]">
+                      <span>{swS}</span>
+                      <span className="text-[10px] sm:text-xs font-bold text-[#8A9791] tracking-widest mt-1">SEC</span>
                     </div>
                   </div>
+
+                  <div className="mt-5 flex items-center space-x-2 text-xs font-bold text-[#576560] dark:text-[#8BA398] uppercase tracking-wider">
+                    <Clock className="w-4 h-4 text-[#1B3B2F] dark:text-[#34D399]" />
+                    <span>
+                      {stopwatchIsRunning
+                        ? 'Active Session in Progress'
+                        : stopwatchIsPaused
+                        ? 'Session Paused'
+                        : 'Ready to Track Focus'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Stopwatch Controls (Start, Pause, Resume, Reset) */}
+              <div className="flex items-center space-x-4 w-full justify-center mt-2">
+                {!stopwatchIsRunning && !stopwatchIsPaused ? (
+                  <button
+                    onClick={handleStartStopwatch}
+                    className="flex items-center space-x-2 bg-[#1B3B2F] hover:bg-[#142C23] text-white px-10 py-4 rounded-2xl font-bold text-sm shadow-sm transition transform hover:scale-105 cursor-pointer"
+                  >
+                    <Play className="w-4 h-4 fill-current" />
+                    <span>START STOPWATCH</span>
+                  </button>
+                ) : stopwatchIsRunning ? (
+                  <>
+                    <button
+                      onClick={handlePauseStopwatch}
+                      className="flex items-center space-x-2 bg-amber-500 hover:bg-amber-600 text-white px-8 py-3.5 rounded-2xl font-bold text-sm shadow-sm transition transform hover:scale-105 cursor-pointer"
+                    >
+                      <Pause className="w-4 h-4" />
+                      <span>Pause</span>
+                    </button>
+                    <button
+                      onClick={handleResetStopwatch}
+                      className="flex items-center justify-center p-3.5 rounded-2xl text-stone-500 bg-stone-100 hover:bg-stone-200 dark:bg-stone-800 dark:hover:bg-stone-700 transition cursor-pointer shadow-sm"
+                      title="Reset Stopwatch"
+                    >
+                      <Square className="w-5 h-5 text-rose-500 fill-rose-500" />
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      onClick={handleResumeStopwatch}
+                      className="flex items-center space-x-2 bg-[#1B3B2F] hover:bg-[#142C23] text-white px-9 py-4 rounded-2xl font-bold text-sm shadow-sm transition transform hover:scale-105 cursor-pointer"
+                    >
+                      <Play className="w-4 h-4 fill-current" />
+                      <span>Resume</span>
+                    </button>
+                    <button
+                      onClick={handleResetStopwatch}
+                      className="flex items-center justify-center p-3.5 rounded-2xl text-stone-500 bg-stone-100 hover:bg-stone-200 dark:bg-stone-800 dark:hover:bg-stone-700 transition cursor-pointer shadow-sm"
+                      title="Reset Stopwatch"
+                    >
+                      <Square className="w-5 h-5 text-rose-500 fill-rose-500" />
+                    </button>
+                  </>
                 )}
               </div>
-            )}
-          </div>
+            </>
+          ) : (
+            <>
+              {/* Focus Interval Info / Status */}
+              <div className="mt-6 w-full max-w-sm flex items-center justify-between px-4 py-2.5 rounded-2xl bg-[#FAF8F5] dark:bg-[#1C2E29] border border-[#EAE5DD] dark:border-[#253D35] text-xs">
+                <div className="flex items-center space-x-2">
+                  <span className="font-bold text-[#1C2A24] dark:text-[#F2F7F4]">
+                    Focus Interval:
+                  </span>
+                  <span className="font-mono font-black text-sm text-[#1B3B2F] dark:text-[#34D399]">
+                    {formatMMSS(intervalSeconds)} / 25:00
+                  </span>
+                </div>
 
-          {/* Focus Interval Info / Status */}
-          <div className="mt-6 w-full max-w-sm flex items-center justify-between px-4 py-2.5 rounded-2xl bg-[#FAF8F5] dark:bg-[#1C2E29] border border-[#EAE5DD] dark:border-[#253D35] text-xs">
-            <div className="flex items-center space-x-2">
-              <span className="font-bold text-[#1C2A24] dark:text-[#F2F7F4]">
-                Focus Interval:
-              </span>
-              <span className="font-mono font-black text-sm text-[#1B3B2F] dark:text-[#34D399]">
-                {formatMMSS(intervalSeconds)} / 25:00
-              </span>
-            </div>
+                <div>
+                  {isIntervalEligibleForFreeBreak ? (
+                    <span className="inline-flex items-center space-x-1 font-bold text-emerald-600 dark:text-emerald-400 text-[11px]">
+                      <span>Free Break Ready</span>
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center space-x-1 font-bold text-amber-700 dark:text-amber-400 text-[11px]">
+                      <span>−1 Coin penalty</span>
+                    </span>
+                  )}
+                </div>
+              </div>
 
-            <div>
-              {isIntervalEligibleForFreeBreak ? (
-                <span className="inline-flex items-center space-x-1 font-bold text-emerald-600 dark:text-emerald-400 text-[11px]">
-                 
-                  <span>Free Break Ready</span>
-                </span>
-              ) : (
-                <span className="inline-flex items-center space-x-1 font-bold text-amber-700 dark:text-amber-400 text-[11px]">
-                  <span>−1 Coin penalty</span>
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* Radial Timer Dial with HUGE Interactive Numbers */}
-          <div className="relative my-8 flex items-center justify-center w-full min-h-[340px]">
-            <svg className="w-80 h-80 transform -rotate-90">
-              <circle
-                cx="160"
-                cy="160"
-                r={radius}
-                className="text-stone-100 dark:text-stone-800"
-                strokeWidth="12"
-                stroke="currentColor"
-                fill="transparent"
-              />
-              <circle
-                cx="160"
-                cy="160"
-                r={radius}
-                stroke={activeColorInfo.hex}
-                strokeWidth="16"
-                strokeDasharray={circumference}
-                strokeDashoffset={strokeDashoffset}
-                strokeLinecap="round"
-                fill="transparent"
-                className="transition-all duration-1000 ease-linear drop-shadow-md"
-              />
-            </svg>
-
-            {/* Inner Clock Face readout */}
-            <div className="absolute flex flex-col items-center justify-center text-center w-full h-full z-10">
-              <div className="flex items-center justify-center text-5xl sm:text-6xl font-black font-mono tracking-tight text-[#1C2A24] dark:text-[#F2F7F4]">
-                {showHours && (
-                  <EditableSegment
-                    field="h"
-                    label="H"
-                    value={h}
-                    activeField={activeEditField}
-                    inputVal={inputValue}
-                    onFocus={handleTimeFocus}
-                    onChange={handleTimeChange}
-                    onSubmit={handleTimeSubmit}
-                    colon={true}
+              {/* Radial Timer Dial with HUGE Interactive Numbers */}
+              <div className="relative z-0 my-8 flex items-center justify-center w-full min-h-[340px]">
+                <svg className="w-80 h-80 transform -rotate-90">
+                  <circle
+                    cx="160"
+                    cy="160"
+                    r={radius}
+                    className="text-stone-100 dark:text-stone-800"
+                    strokeWidth="12"
+                    stroke="currentColor"
+                    fill="transparent"
                   />
-                )}
-                <EditableSegment
-                  field="m"
-                  label="M"
-                  value={m}
-                  activeField={activeEditField}
-                  inputVal={inputValue}
-                  onFocus={handleTimeFocus}
-                  onChange={handleTimeChange}
-                  onSubmit={handleTimeSubmit}
-                  colon={true}
-                />
-                <EditableSegment
-                  field="s"
-                  label="S"
-                  value={s}
-                  activeField={activeEditField}
-                  inputVal={inputValue}
-                  onFocus={handleTimeFocus}
-                  onChange={handleTimeChange}
-                  onSubmit={handleTimeSubmit}
-                  colon={false}
-                />
+                  <circle
+                    cx="160"
+                    cy="160"
+                    r={radius}
+                    stroke={activeColorInfo.hex}
+                    strokeWidth="16"
+                    strokeDasharray={circumference}
+                    strokeDashoffset={strokeDashoffset}
+                    strokeLinecap="round"
+                    fill="transparent"
+                    className="transition-all duration-1000 ease-linear drop-shadow-md"
+                  />
+                </svg>
+
+                {/* Inner Clock Face readout */}
+                <div className="absolute flex flex-col items-center justify-center text-center w-full h-full z-10">
+                  <div className="flex items-center justify-center text-5xl sm:text-6xl font-black font-mono tracking-tight text-[#1C2A24] dark:text-[#F2F7F4]">
+                    {showHours && (
+                      <EditableSegment
+                        field="h"
+                        label="H"
+                        value={h}
+                        activeField={activeEditField}
+                        inputVal={inputValue}
+                        onFocus={handleTimeFocus}
+                        onChange={handleTimeChange}
+                        onSubmit={handleTimeSubmit}
+                        colon={true}
+                      />
+                    )}
+                    <EditableSegment
+                      field="m"
+                      label="M"
+                      value={m}
+                      activeField={activeEditField}
+                      inputVal={inputValue}
+                      onFocus={handleTimeFocus}
+                      onChange={handleTimeChange}
+                      onSubmit={handleTimeSubmit}
+                      colon={true}
+                    />
+                    <EditableSegment
+                      field="s"
+                      label="S"
+                      value={s}
+                      activeField={activeEditField}
+                      inputVal={inputValue}
+                      onFocus={handleTimeFocus}
+                      onChange={handleTimeChange}
+                      onSubmit={handleTimeSubmit}
+                      colon={false}
+                    />
+                  </div>
+
+                  <span className="text-xs font-bold text-[#576560] dark:text-[#8BA398] mt-3 uppercase tracking-wider">
+                    {isPaused ? 'Session Paused' : isRunning ? 'In Deep Flow' : 'Ready to Focus'}
+                  </span>
+                </div>
               </div>
 
-              <span className="text-xs font-bold text-[#576560] dark:text-[#8BA398] mt-3 uppercase tracking-wider">
-                {isPaused ? 'Session Paused' : isRunning ? 'In Deep Flow' : 'Ready to Focus'}
-              </span>
+              {/* Main Controls (Start, Break / Pause, Resume, Stop) */}
+              <div className="flex items-center space-x-4 w-full justify-center mt-4">
+                {isAlarmPlaying ? (
+                  <button
+                    onClick={handleStopAlarm}
+                    className="flex items-center space-x-2 bg-rose-600 hover:bg-rose-700 text-white px-8 py-3.5 rounded-2xl font-black text-sm shadow-lg transition transform hover:scale-105 cursor-pointer animate-pulse"
+                  >
+                    <BellOff className="w-5 h-5" />
+                    <span>STOP ALARM</span>
+                  </button>
+                ) : !isRunning && !isPaused ? (
+                  <button
+                    onClick={() => handleStartOrResumeClick('start')}
+                    className="flex items-center space-x-2 bg-[#1B3B2F] hover:bg-[#142C23] text-white px-10 py-4 rounded-2xl font-bold text-sm shadow-sm transition transform hover:scale-105 cursor-pointer"
+                  >
+                    <Play className="w-4 h-4 fill-current" />
+                    <span>START FOCUS</span>
+                  </button>
+                ) : isPaused ? (
+                  <>
+                    <button
+                      onClick={() => handleStartOrResumeClick('resume')}
+                      className="flex items-center space-x-2 bg-[#1B3B2F] hover:bg-[#142C23] text-white px-9 py-4 rounded-2xl font-bold text-sm shadow-sm transition transform hover:scale-105 cursor-pointer"
+                    >
+                      <Play className="w-4 h-4 fill-current" />
+                      <span>Resume Focus</span>
+                    </button>
+                    <button
+                      onClick={handleReset}
+                      className="flex items-center justify-center p-3.5 rounded-2xl text-stone-500 bg-stone-100 hover:bg-stone-200 dark:bg-stone-800 dark:hover:bg-stone-700 transition cursor-pointer shadow-sm"
+                      title="Cancel Focus Session"
+                    >
+                      <Square className="w-5 h-5 text-rose-500 fill-rose-500" />
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    {/* Active running: user can take break */}
+                    <button
+                      onClick={handleBreakButtonClick}
+                      className={`flex items-center space-x-2 border px-6 py-3.5 rounded-2xl font-bold text-sm transition cursor-pointer shadow-sm ${
+                        isIntervalEligibleForFreeBreak
+                          ? 'bg-[#E8F5EE] dark:bg-[#1C2E29] text-[#1B3B2F] dark:text-[#A3D9C9] border-[#C8E6D5] dark:border-[#2B5246] hover:bg-[#D5EBDD]'
+                          : 'bg-[#FAF8F5] dark:bg-[#1C2E29] text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-800/60 hover:bg-rose-50 dark:hover:bg-rose-950/40'
+                      }`}
+                    >
+                      <Pause className="w-4 h-4" />
+                      <span>{isIntervalEligibleForFreeBreak ? 'Take Free Break' : 'Take Break (−1 Coin)'}</span>
+                    </button>
 
-              {/* Progress Summary: Today's verified focus so far */}
-             
-            </div>
-          </div>
-
-          {/* Main Controls (Start, Break / Pause, Resume, Stop) */}
-          <div className="flex items-center space-x-4 w-full justify-center mt-4">
-            {isAlarmPlaying ? (
-              <button
-                onClick={handleStopAlarm}
-                className="flex items-center space-x-2 bg-rose-600 hover:bg-rose-700 text-white px-8 py-3.5 rounded-2xl font-black text-sm shadow-lg transition transform hover:scale-105 cursor-pointer animate-pulse"
-              >
-                <BellOff className="w-5 h-5" />
-                <span>STOP ALARM</span>
-              </button>
-            ) : !isRunning && !isPaused ? (
-              <button
-                onClick={() => handleStartOrResumeClick('start')}
-                className="flex items-center space-x-2 bg-[#1B3B2F] hover:bg-[#142C23] text-white px-10 py-4 rounded-2xl font-bold text-sm shadow-sm transition transform hover:scale-105 cursor-pointer"
-              >
-                <Play className="w-4 h-4 fill-current" />
-                <span>START FOCUS</span>
-              </button>
-            ) : isPaused ? (
-              <>
-                <button
-                  onClick={() => handleStartOrResumeClick('resume')}
-                  className="flex items-center space-x-2 bg-[#1B3B2F] hover:bg-[#142C23] text-white px-9 py-4 rounded-2xl font-bold text-sm shadow-sm transition transform hover:scale-105 cursor-pointer"
-                >
-                  <Play className="w-4 h-4 fill-current" />
-                  <span>Resume Focus</span>
-                </button>
-                <button
-                  onClick={handleReset}
-                  className="flex items-center justify-center p-3.5 rounded-2xl text-stone-500 bg-stone-100 hover:bg-stone-200 dark:bg-stone-800 dark:hover:bg-stone-700 transition cursor-pointer shadow-sm"
-                  title="Cancel Focus Session"
-                >
-                  <Square className="w-5 h-5 text-rose-500 fill-rose-500" />
-                </button>
-              </>
-            ) : (
-              <>
-                {/* Active running: user can take break */}
-                <button
-                  onClick={handleBreakButtonClick}
-                  className={`flex items-center space-x-2 border px-6 py-3.5 rounded-2xl font-bold text-sm transition cursor-pointer shadow-sm ${
-                    isIntervalEligibleForFreeBreak
-                      ? 'bg-[#E8F5EE] dark:bg-[#1C2E29] text-[#1B3B2F] dark:text-[#A3D9C9] border-[#C8E6D5] dark:border-[#2B5246] hover:bg-[#D5EBDD]'
-                      : 'bg-[#FAF8F5] dark:bg-[#1C2E29] text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-800/60 hover:bg-rose-50 dark:hover:bg-rose-950/40'
-                  }`}
-                >
-                  <Pause className="w-4 h-4" />
-                  <span>{isIntervalEligibleForFreeBreak ? 'Take Free Break' : 'Take Break (−1 Coin)'}</span>
-                </button>
-
-                <button
-                  onClick={handleReset}
-                  className="flex items-center justify-center p-3.5 rounded-2xl text-stone-500 bg-stone-100 hover:bg-stone-200 dark:bg-stone-800 dark:hover:bg-stone-700 transition cursor-pointer shadow-sm"
-                  title="Cancel Focus Session"
-                >
-                  <Square className="w-5 h-5 text-rose-500 fill-rose-500" />
-                </button>
-              </>
-            )}
-          </div>
+                    <button
+                      onClick={handleReset}
+                      className="flex items-center justify-center p-3.5 rounded-2xl text-stone-500 bg-stone-100 hover:bg-stone-200 dark:bg-stone-800 dark:hover:bg-stone-700 transition cursor-pointer shadow-sm"
+                      title="Cancel Focus Session"
+                    >
+                      <Square className="w-5 h-5 text-rose-500 fill-rose-500" />
+                    </button>
+                  </>
+                )}
+              </div>
+            </>
+          )}
         </div>
 
         {/* RIGHT COLUMN: Interactive 2D Mascot Companion */}
