@@ -43,21 +43,37 @@ router.get('/dashboard', requireAuth, async (req, res) => {
       .filter((s) => calculateSessionFocusMinutes(s) > 0 || s.status === 'completed')
       .map((s) => {
         const cleanName = (s.taskName || 'Focus').trim();
-        const color = subjectColorMap[cleanName.toLowerCase()] || s.colorTag || '#3B82F6';
+        const isStopwatch = s.sessionType === 'stopwatch';
+        const subjectColor = subjectColorMap[cleanName.toLowerCase()] || '#10B981';
+        const defaultColor = isStopwatch
+          ? (s.stopwatchColorIndex === 1 ? '#5D3318' : '#C48255')
+          : subjectColor;
+        const color = isStopwatch
+          ? (s.colorTag || defaultColor)
+          : (subjectColorMap[cleanName.toLowerCase()] || s.colorTag || '#3B82F6');
         const mins = calculateSessionFocusMinutes(s);
         const dStr = s.dateStr || getStudyDayDate(s.startTime, resetTime, tzOffset);
         return {
           id: s._id.toString(),
+          _id: s._id.toString(),
           name: cleanName,
           taskName: cleanName,
+          subjectColor,
           color,
           colorTag: color,
           minutes: mins,
           durationMinutes: mins,
+          actualMinutes: s.actualMinutes || mins,
+          actualSeconds: s.actualSeconds || Math.round(mins * 60),
           dateStr: dStr,
           startTime: s.startTime,
+          endTime: s.endTime,
           status: s.status,
           isInterrupted: Boolean(s.isInterrupted),
+          sessionType: s.sessionType || 'deep_focus',
+          activityDescription: s.activityDescription || '',
+          sessionNumber: s.sessionNumber || 1,
+          stopwatchColorIndex: s.stopwatchColorIndex ?? 0,
         };
       });
 
@@ -65,7 +81,7 @@ router.get('/dashboard', requireAuth, async (req, res) => {
     const tagMap = {};
     sessionHistory.forEach((s) => {
       const name = s.name;
-      const color = s.color;
+      const color = subjectColorMap[name.toLowerCase()] || s.subjectColor || '#3B82F6';
       const mins = s.minutes;
       if (!tagMap[name]) {
         tagMap[name] = { name, color, minutes: 0 };

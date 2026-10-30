@@ -46,14 +46,14 @@ export const Sidebar = ({
   const coins = user?.coins || 0;
 
   return (
-    <aside className="hidden md:flex flex-col w-64 h-screen sticky top-0 bg-[#FAF8F5] dark:bg-[#0F1A16] border-r border-[#EAE5DD] dark:border-[#233831] px-4 py-6 transition-colors duration-200 select-none z-30">
+    <aside className="hidden md:flex flex-col w-64 h-screen sticky top-0 bg-[#F6FAF7] dark:bg-[#0A0F0D] border-r border-emerald-950/5 dark:border-white/5 px-4 py-6 transition-colors duration-200 select-none z-30">
       {/* Brand Header */}
       <div className="flex items-center space-x-3 px-3 mb-6">
-        <div className="w-10 h-10 rounded-2xl bg-[#1B3B2F] text-[#DCEFE3] flex items-center justify-center font-black text-xl shadow-sm">
+        <div className="w-10 h-10 rounded-2xl bg-[#0D1F17] dark:bg-[#10B981] text-emerald-400 dark:text-[#06140D] flex items-center justify-center font-black text-xl shadow-sm">
           🌱
         </div>
         <div>
-          <h1 className="text-lg font-black text-[#1C2A24] dark:text-[#F2F7F4] tracking-tight leading-tight">
+          <h1 className="text-lg font-black text-[#0D1F17] dark:text-white tracking-tight leading-tight">
             Padhaku Billa
           </h1>
          
@@ -61,12 +61,12 @@ export const Sidebar = ({
       </div>
 
       {/* Mini Streak & Coin Badge Bar */}
-      <div className="mx-2 mb-6 p-3 rounded-2xl bg-[#E8F5EE] dark:bg-[#162420] border border-[#C8E6D5] dark:border-[#2B5246] flex items-center justify-between text-xs font-bold">
+      <div className="mx-2 mb-6 p-3 rounded-2xl bg-[#E8F7F0] dark:bg-[#121A17] border border-emerald-500/20 dark:border-white/5 flex items-center justify-between text-xs font-bold">
         <div className="flex items-center space-x-1.5 text-[#D97724] dark:text-[#F59E0B]">
           <Flame className="w-4 h-4 fill-current" />
           <span>{globalStreak}d Streak</span>
         </div>
-        <div className="flex items-center space-x-1 text-[#1B3B2F] dark:text-[#A3D9C9]">
+        <div className="flex items-center space-x-1 text-[#065F46] dark:text-[#34D399]">
           <Coins className="w-4 h-4 fill-current" />
           <span>{coins} Coins</span>
         </div>
@@ -86,11 +86,11 @@ export const Sidebar = ({
               }}
               className={`w-full flex items-center space-x-3 px-3.5 py-2.5 rounded-2xl text-xs font-bold transition-all text-left cursor-pointer ${
                 isActive
-                  ? 'bg-[#1B3B2F] text-white shadow-sm'
-                  : 'text-[#576560] dark:text-[#9EB5AB] hover:bg-[#F0ECE6] dark:hover:bg-[#1C2E29] hover:text-[#1C2A24] dark:hover:text-white'
+                  ? 'bg-[#0D1F17] text-white dark:bg-[#10B981] dark:text-[#06140D] shadow-sm font-black'
+                  : 'text-[#4A5B53] dark:text-[#94A3B8] hover:bg-[#E8F7F0]/60 dark:hover:bg-[#141C18] hover:text-[#0D1F17] dark:hover:text-white'
               }`}
             >
-              <Icon className={`w-4 h-4 ${isActive ? 'text-[#DCEFE3]' : 'text-current'}`} />
+              <Icon className={`w-4 h-4 ${isActive ? 'text-emerald-400 dark:text-[#06140D]' : 'text-current'}`} />
               <div className="flex-1">
                 <span className="block text-xs font-bold">{item.label}</span>
               </div>
@@ -100,7 +100,7 @@ export const Sidebar = ({
       </nav>
 
       {/* Sidebar Footer Controls */}
-      <div className="pt-4 border-t border-[#EAE5DD] dark:border-[#233831] flex items-center justify-between px-2">
+      <div className="pt-4 border-t border-emerald-950/5 dark:border-white/5 flex items-center justify-between px-2">
         <div className="flex items-center space-x-2">
           {/* Theme Toggle */}
           <button

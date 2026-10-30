@@ -4,37 +4,37 @@
 
 @layer base {
   :root {
-    --bg-app: #FAF8F5;
+    --bg-app: #F6FAF7;
     --bg-card: #FFFFFF;
-    --bg-card-subtle: #F4EFEB;
-    --border-card: #EAE5DD;
-    --color-primary: #1B3B2F;
-    --color-primary-hover: #142C23;
-    --color-teal: #2B5A52;
-    --color-mint: #E8F5EE;
-    --color-mint-border: #C8E6D5;
+    --bg-card-subtle: #EDF6F1;
+    --border-card: #E2ECE6;
+    --color-primary: #0D1F17;
+    --color-primary-hover: #07130E;
+    --color-teal: #059669;
+    --color-mint: #E8F7F0;
+    --color-mint-border: #A7F3D0;
     --color-amber: #D97724;
     --color-amber-light: #FEF3C7;
-    --text-primary: #1C2A24;
-    --text-secondary: #576560;
-    --text-tertiary: #8A9791;
+    --text-primary: #0D1F17;
+    --text-secondary: #4A5B53;
+    --text-tertiary: #82948C;
   }
 
   [data-theme='dark'] {
-    --bg-app: #0F1A16;
-    --bg-card: #162420;
-    --bg-card-subtle: #1C2E29;
-    --border-card: #253D35;
-    --color-primary: #38746A;
-    --color-primary-hover: #458B7F;
-    --color-teal: #4D8F84;
-    --color-mint: #1B332B;
-    --color-mint-border: #2B5246;
+    --bg-app: #0A0F0D;
+    --bg-card: #121A17;
+    --bg-card-subtle: #182420;
+    --border-card: #20302A;
+    --color-primary: #10B981;
+    --color-primary-hover: #059669;
+    --color-teal: #34D399;
+    --color-mint: #064E3B;
+    --color-mint-border: #047857;
     --color-amber: #F59E0B;
     --color-amber-light: #3D2B14;
-    --text-primary: #F2F7F4;
-    --text-secondary: #9EB5AB;
-    --text-tertiary: #6E857C;
+    --text-primary: #FFFFFF;
+    --text-secondary: #94A3B8;
+    --text-tertiary: #64748B;
   }
 
   body {

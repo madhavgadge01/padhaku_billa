@@ -26,13 +26,13 @@ export const TopHeader = ({
   const showcaseBadgeIds = user?.inventory?.showcaseBadges || [];
 
   return (
-    <header className="px-4 sm:px-8 py-4 flex items-center justify-between border-b border-[#EAE5DD] dark:border-[#233831] bg-[#FAF8F5]/80 dark:bg-[#0F1A16]/80 backdrop-blur-md sticky top-0 z-20 transition-colors">
+    <header className="px-4 sm:px-8 py-4 flex items-center justify-between border-b border-emerald-950/5 dark:border-white/5 bg-[#F6FAF7]/85 dark:bg-[#0A0F0D]/85 backdrop-blur-md sticky top-0 z-20 transition-colors">
       {/* Left: Friendly Greeting */}
       <div>
-        <h2 className="text-base sm:text-lg font-black text-[#1C2A24] dark:text-[#F2F7F4] tracking-tight">
+        <h2 className="text-base sm:text-lg font-black text-[#0D1F17] dark:text-white tracking-tight">
           {getGreeting()}, {name}! 👋
         </h2>
-        <p className="text-xs text-[#576560] dark:text-[#8BA398] font-medium hidden sm:block">
+        <p className="text-xs text-[#4A5B53] dark:text-[#94A3B8] font-medium hidden sm:block">
          Honest with yourself. I track your time, not your lies.👀
         </p>
       </div>

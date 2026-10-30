@@ -49,14 +49,14 @@ export const BottomNav = ({ activePage, onNavigate }) => {
           onClick={() => setShowMoreMenu(false)}
         >
           <div
-            className="bg-[#FAF8F5] dark:bg-[#162420] border-t border-[#EAE5DD] dark:border-[#253D35] rounded-t-3xl p-6 space-y-3 animate-in slide-in-from-bottom duration-200"
+            className="bg-white dark:bg-[#121A17] border-t border-emerald-950/5 dark:border-white/5 rounded-t-3xl p-6 space-y-3 animate-in slide-in-from-bottom duration-200"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between pb-2 border-b border-[#EAE5DD] dark:border-[#253D35]">
-              <h3 className="text-sm font-bold text-[#1C2A24] dark:text-[#F2F7F4]">More Features</h3>
+            <div className="flex items-center justify-between pb-2 border-b border-emerald-950/5 dark:border-white/5">
+              <h3 className="text-sm font-black text-[#0D1F17] dark:text-white">More Features</h3>
               <button
                 onClick={() => setShowMoreMenu(false)}
-                className="p-1 text-[#576560] dark:text-[#9EB5AB] hover:text-[#1C2A24]"
+                className="p-1 text-[#4A5B53] dark:text-[#94A3B8] hover:text-[#0D1F17] dark:hover:text-white"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -72,8 +72,8 @@ export const BottomNav = ({ activePage, onNavigate }) => {
                     onClick={() => handleSelect(item.id)}
                     className={`flex items-center space-x-2.5 p-3 rounded-2xl text-xs font-bold transition text-left cursor-pointer ${
                       isActive
-                        ? 'bg-[#1B3B2F] text-white shadow-sm'
-                        : 'bg-[#F4EFEB] dark:bg-[#1C2E29] text-[#1C2A24] dark:text-[#F2F7F4] hover:bg-[#EAE5DD]'
+                        ? 'bg-[#0D1F17] text-white dark:bg-[#10B981] dark:text-[#06140D] font-black shadow-sm'
+                        : 'bg-[#F4FBF7] dark:bg-[#16201C] text-[#0D1F17] dark:text-white hover:bg-[#E8F7F0]'
                     }`}
                   >
                     <Icon className="w-4 h-4" />
@@ -87,7 +87,7 @@ export const BottomNav = ({ activePage, onNavigate }) => {
       )}
 
       {/* Fixed Bottom Navigation Bar */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-[#FAF8F5]/90 dark:bg-[#0F1A16]/90 backdrop-blur-md border-t border-[#EAE5DD] dark:border-[#233831] px-3 py-2 z-30 select-none">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-[#F6FAF7]/95 dark:bg-[#0A0F0D]/95 backdrop-blur-md border-t border-emerald-950/5 dark:border-white/5 px-3 py-2 z-30 select-none">
         <div className="flex items-center justify-around max-w-md mx-auto">
           {mainTabs.map((tab) => {
             const Icon = tab.icon;
@@ -98,13 +98,13 @@ export const BottomNav = ({ activePage, onNavigate }) => {
                 onClick={() => handleSelect(tab.id)}
                 className={`flex flex-col items-center py-1 px-3 rounded-2xl transition cursor-pointer ${
                   isActive
-                    ? 'text-[#1B3B2F] dark:text-[#A3D9C9] font-black'
-                    : 'text-[#576560] dark:text-[#8BA398] hover:text-[#1C2A24]'
+                    ? 'text-[#0D1F17] dark:text-[#34D399] font-black'
+                    : 'text-[#4A5B53] dark:text-[#94A3B8] hover:text-[#0D1F17]'
                 }`}
               >
                 <div
                   className={`p-1.5 rounded-xl transition ${
-                    isActive ? 'bg-[#E8F5EE] dark:bg-[#162420]' : 'bg-transparent'
+                    isActive ? 'bg-[#E8F7F0] dark:bg-[#16201C]' : 'bg-transparent'
                   }`}
                 >
                   <Icon className="w-5 h-5" />
@@ -122,13 +122,13 @@ export const BottomNav = ({ activePage, onNavigate }) => {
             }}
             className={`flex flex-col items-center py-1 px-3 rounded-2xl transition cursor-pointer ${
               isMoreActive
-                ? 'text-[#1B3B2F] dark:text-[#A3D9C9] font-black'
-                : 'text-[#576560] dark:text-[#8BA398] hover:text-[#1C2A24]'
+                ? 'text-[#0D1F17] dark:text-[#34D399] font-black'
+                : 'text-[#4A5B53] dark:text-[#94A3B8] hover:text-[#0D1F17]'
             }`}
           >
             <div
               className={`p-1.5 rounded-xl transition ${
-                isMoreActive ? 'bg-[#E8F5EE] dark:bg-[#162420]' : 'bg-transparent'
+                isMoreActive ? 'bg-[#E8F7F0] dark:bg-[#16201C]' : 'bg-transparent'
               }`}
             >
               <Menu className="w-5 h-5" />

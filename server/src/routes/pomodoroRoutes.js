@@ -966,4 +966,149 @@ router.delete('/daily-goal-override', requireAuth, async (req, res) => {
   }
 });
 
+// 9. Save Completed Stopwatch Session
+router.post('/stopwatch', requireAuth, async (req, res) => {
+  try {
+    const {
+      activityName,
+      taskName,
+      name,
+      activityDescription,
+      subjectId,
+      taskId,
+      actualSeconds,
+      durationSeconds,
+      startTime,
+      endTime,
+    } = req.body;
+
+    const rawSeconds = Number(actualSeconds !== undefined ? actualSeconds : durationSeconds);
+    if (isNaN(rawSeconds) || rawSeconds <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid positive elapsed time in seconds is required to save a stopwatch session.',
+      });
+    }
+
+    const elapsedSeconds = Math.round(rawSeconds);
+    const actualMinutes = Math.max(1, Math.round((elapsedSeconds / 60) * 10) / 10);
+    const tzOffset = getTzOffset(req);
+    const resetTime = req.user.dailyResetTime || '06:00';
+    const now = new Date();
+    const start = startTime ? new Date(startTime) : new Date(now.getTime() - elapsedSeconds * 1000);
+    const end = endTime ? new Date(endTime) : now;
+
+    const dateStr = getStudyDayDate(start, resetTime, tzOffset);
+    const dayOfWeek = getStudyDayOfWeek(start, resetTime, tzOffset);
+    const hourOfDay = start.getHours();
+    const isRestDay = isRestDayForUser(req.user, start, tzOffset);
+
+    let finalName = (activityName || taskName || name || '').trim();
+    let targetSubjectId = subjectId || null;
+
+    // Check if matches a subject in weekly timetable
+    const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+    let timetableMatch = null;
+    for (const d of DAYS) {
+      const found = (req.user.weeklyTimetable?.[d] || []).find(
+        (s) =>
+          (targetSubjectId && (s.id === targetSubjectId || s._id?.toString() === targetSubjectId)) ||
+          (finalName && s.name?.trim().toLowerCase() === finalName.toLowerCase())
+      );
+      if (found) {
+        timetableMatch = found;
+        break;
+      }
+    }
+
+    if (timetableMatch) {
+      finalName = timetableMatch.name;
+      targetSubjectId = timetableMatch.id || timetableMatch._id?.toString() || targetSubjectId;
+    } else if (!finalName) {
+      finalName = 'Stopwatch Focus';
+    }
+
+    // Match or create Task for database reference
+    let matchedTask = null;
+    if (taskId && mongoose.isValidObjectId(taskId)) {
+      matchedTask = await Task.findOne({ _id: taskId, userId: req.user._id });
+    }
+    if (!matchedTask && targetSubjectId && mongoose.isValidObjectId(targetSubjectId)) {
+      matchedTask = await Task.findOne({ _id: targetSubjectId, userId: req.user._id });
+    }
+    if (!matchedTask) {
+      matchedTask = await Task.findOne({ name: finalName, userId: req.user._id });
+    }
+    if (!matchedTask) {
+      matchedTask = new Task({
+        userId: req.user._id,
+        name: finalName,
+        colorTag: '#C48255',
+        durationMinutes: Math.round(actualMinutes),
+        currentStreak: 0,
+        bestStreak: 0,
+      });
+      await matchedTask.save();
+    }
+
+    // Determine sessionNumber for this activity
+    const priorCount = await PomodoroSession.countDocuments({
+      userId: req.user._id,
+      taskName: finalName,
+      sessionType: 'stopwatch',
+    });
+    const sessionNumber = priorCount + 1;
+    const stopwatchColorIndex = (sessionNumber - 1) % 2; // 0 = Light brown (#C48255), 1 = Dark brown (#5D3318)
+    const assignedColor = stopwatchColorIndex === 0 ? '#C48255' : '#5D3318';
+
+    const session = new PomodoroSession({
+      userId: req.user._id,
+      taskId: matchedTask?._id || undefined,
+      subjectId: targetSubjectId,
+      taskName: finalName,
+      sessionType: 'stopwatch',
+      activityDescription: (activityDescription || '').trim(),
+      sessionNumber,
+      stopwatchColorIndex,
+      colorTag: assignedColor,
+      durationMinutes: actualMinutes,
+      totalGoalSeconds: elapsedSeconds,
+      remainingSeconds: 0,
+      actualSeconds: elapsedSeconds,
+      actualMinutes,
+      accumulatedSeconds: elapsedSeconds,
+      startTime: start,
+      endTime: end,
+      status: 'completed',
+      dateStr,
+      dayOfWeek,
+      hourOfDay,
+      isRestDay,
+    });
+
+    await session.save();
+
+    if (matchedTask) {
+      try {
+        await updateTaskStreak(req.user, matchedTask, dateStr);
+      } catch (err) {
+        console.warn('[Stopwatch Warning] Streak update failed:', err.message);
+      }
+    }
+
+    console.log(
+      `[Stopwatch Service] Saved session: ${session._id} for "${finalName}" (${elapsedSeconds}s, ${actualMinutes}m) user: ${req.user._id} (Session #${sessionNumber})`
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: `Stopwatch session for "${finalName}" saved to focus history!`,
+      session,
+    });
+  } catch (error) {
+    console.error('[Pomodoro Error] Stopwatch save:', error);
+    return res.status(500).json({ success: false, message: 'Failed to save stopwatch session.' });
+  }
+});
+
 export default router;

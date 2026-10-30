@@ -11,12 +11,30 @@ const PomodoroSessionSchema = new mongoose.Schema(
     taskId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Task',
-      required: true,
+      required: false,
     },
     subjectId: {
       type: String,
       default: null,
       index: true,
+    },
+    sessionType: {
+      type: String,
+      enum: ['deep_focus', 'stopwatch'],
+      default: 'deep_focus',
+      index: true,
+    },
+    activityDescription: {
+      type: String,
+      default: '',
+    },
+    sessionNumber: {
+      type: Number,
+      default: 1,
+    },
+    stopwatchColorIndex: {
+      type: Number,
+      default: 0,
     },
     taskName: {
       type: String,

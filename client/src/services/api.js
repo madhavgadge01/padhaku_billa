@@ -179,6 +179,13 @@ export const api = {
       headers: getHeaders(),
     }).then(handleResponse),
 
+  saveStopwatchSession: (payload) =>
+    fetch(`${API_BASE}/pomodoro/stopwatch`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(payload),
+    }).then(handleResponse),
+
   checkpointSession: (sessionId, data = {}) =>
     fetch(`${API_BASE}/pomodoro/${sessionId}/checkpoint`, {
       method: 'POST',

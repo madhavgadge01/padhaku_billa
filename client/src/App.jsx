@@ -315,12 +315,12 @@ export function App() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#FAF8F5] dark:bg-[#0F1A16] flex flex-col items-center justify-center text-[#1C2A24] dark:text-[#F2F7F4]">
-        <div className="w-12 h-12 rounded-2xl bg-[#1B3B2F] text-[#DCEFE3] flex items-center justify-center font-black text-2xl shadow-sm mb-4 animate-bounce">
+      <div className="min-h-screen bg-[#F6FAF7] dark:bg-[#0A0F0D] flex flex-col items-center justify-center text-[#0D1F17] dark:text-white">
+        <div className="w-12 h-12 rounded-2xl bg-[#0D1F17] dark:bg-[#10B981] text-emerald-400 dark:text-[#06140D] flex items-center justify-center font-black text-2xl shadow-sm mb-4 animate-bounce">
           🌱
         </div>
         <h2 className="text-lg font-black tracking-tight">Padhaku Billa</h2>
-        <p className="text-xs text-[#576560] dark:text-[#8BA398] mt-1 font-medium">
+        <p className="text-xs text-[#4A5B53] dark:text-[#94A3B8] mt-1 font-medium">
           Waking up Sparky and checking streaks...
         </p>
       </div>
@@ -330,7 +330,7 @@ export function App() {
   // --- PUBLIC LANDING VIEW IF NOT LOGGED IN ---
   if (!user) {
     return (
-      <div className="min-h-screen bg-[#FAF8F5] dark:bg-[#0F1A16] text-[#1C2A24] dark:text-[#F2F7F4] flex flex-col transition-colors">
+      <div className="min-h-screen bg-[#F6FAF7] dark:bg-[#0A0F0D] text-[#0D1F17] dark:text-white flex flex-col transition-colors">
         {/* Minimal Navigation */}
         <nav className="p-6 max-w-6xl mx-auto w-full flex items-center justify-between">
           <div className="flex items-center space-x-3">
@@ -455,7 +455,7 @@ export function App() {
   const restDayActive = isRestDayToday();
 
   return (
-    <div className="min-h-screen bg-[#FAF8F5] dark:bg-[#0F1A16] text-[#1C2A24] dark:text-[#F2F7F4] flex flex-col md:flex-row transition-colors duration-200">
+    <div className="min-h-screen bg-[#F6FAF7] dark:bg-[#0A0F0D] text-[#0D1F17] dark:text-white flex flex-col md:flex-row transition-colors duration-200">
       {/* 1. Desktop Left Sidebar */}
       <Sidebar
         activePage={activePage}
