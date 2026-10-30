@@ -1,0 +1,19 @@
+{
+  "name": "Padhaku Billa — Gamified Focus RPG",
+  "short_name": "Padhaku Billa",
+  "description": "Calm, minimal productivity app with gamified focus sessions, interactive mascot, and honest consistency tracking.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FAF8F5",
+  "theme_color": "#1B3B2F",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
+

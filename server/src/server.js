@@ -14,6 +14,8 @@ import petRoutes from './routes/petRoutes.js';
 import shopRoutes from './routes/shopRoutes.js';
 import analyticsRoutes from './routes/analyticsRoutes.js';
 import leaderboardRoutes from './routes/leaderboardRoutes.js';
+import notificationRoutes from './routes/notificationRoutes.js';
+import { startNotificationWatchdog } from './utils/notificationService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -78,6 +80,7 @@ app.use('/api/pet', petRoutes);
 app.use('/api/shop', shopRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/leaderboard', leaderboardRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // SPA Static File Serving & Client Route Fallback (for production direct URL access & refresh)
 const clientDist = path.resolve(__dirname, '../../client/dist');
@@ -102,6 +105,7 @@ app.use((err, req, res, next) => {
 const startServer = async () => {
   try {
     await connectDB();
+    startNotificationWatchdog();
     app.listen(PORT, () => {
       console.log(`\n======================================================`);
       console.log(`🚀 LIFELEVEL RPG PRODUCTION SERVER RUNNING ON PORT ${PORT}`);

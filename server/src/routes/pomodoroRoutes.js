@@ -20,6 +20,10 @@ import {
   calculateSessionFocusMinutes,
   reconcileOrphanedSessions,
 } from '../utils/focusTimeHelper.js';
+import {
+  scheduleSessionNotification,
+  cancelSessionNotification,
+} from '../utils/notificationService.js';
 
 const router = express.Router();
 
@@ -162,6 +166,7 @@ router.post('/start', requireAuth, async (req, res) => {
     );
 
     const totalGoalSeconds = taskDuration * 60;
+    const expectedEndTime = new Date(now.getTime() + totalGoalSeconds * 1000);
     const session = new PomodoroSession({
       userId: req.user._id,
       taskId: matchedTask._id,
@@ -172,6 +177,8 @@ router.post('/start', requireAuth, async (req, res) => {
       totalGoalSeconds,
       remainingSeconds: totalGoalSeconds,
       startTime: now,
+      expectedEndTime,
+      completionNotificationSent: false,
       activeSegmentStart: now,
       currentIntervalStart: now,
       lastHeartbeatAt: now,
@@ -191,6 +198,7 @@ router.post('/start', requireAuth, async (req, res) => {
     });
 
     await session.save();
+    scheduleSessionNotification(session._id, req.user._id, taskName, expectedEndTime);
     console.log(`[Timer Service] [Start] Session: ${session._id} User: ${req.user._id} Task: "${taskName}" (${taskDuration}m)`);
 
     return res.status(201).json({
@@ -260,6 +268,8 @@ router.post('/:sessionId/pause', requireAuth, async (req, res) => {
 
     session.lastHeartbeatAt = now;
     session.status = 'paused';
+    session.expectedEndTime = null;
+    cancelSessionNotification(session._id);
 
     const user = req.user;
     const intervalSecs = Math.max(0, session.intervalActiveSeconds || 0);
@@ -392,7 +402,14 @@ router.post('/:sessionId/resume', requireAuth, async (req, res) => {
       }
     }
 
+    const totalGoalSecs = session.totalGoalSeconds || session.durationMinutes * 60;
+    const remainingSecs = Math.max(0, totalGoalSecs - (session.accumulatedSeconds || 0));
+    const expectedEndTime = new Date(now.getTime() + remainingSecs * 1000);
+    session.expectedEndTime = expectedEndTime;
+    session.completionNotificationSent = false;
+
     await session.save();
+    scheduleSessionNotification(session._id, req.user._id, session.taskName, expectedEndTime);
 
     return res.json({
       success: true,
@@ -546,6 +563,9 @@ router.post('/:sessionId/complete', requireAuth, async (req, res) => {
     session.endTime = now;
     session.status = 'completed';
     session.dateStr = todayStudyDay;
+    session.expectedEndTime = null;
+    session.completionNotificationSent = true;
+    cancelSessionNotification(session._id);
 
     // 1. Session Coin Reward Math (Section 7):
     // Eligible completed focus session awards exactly +5 coins once.
@@ -733,6 +753,8 @@ router.post('/:sessionId/stop', requireAuth, async (req, res) => {
     session.endTime = now;
     session.status = 'stopped';
     session.coinsEarned = 0;
+    session.expectedEndTime = null;
+    cancelSessionNotification(session._id);
     await session.save();
 
     return res.json({

@@ -23,6 +23,16 @@ export default defineConfig(({ mode }) => {
     ''
   ).trim();
 
+  const vapidPublicKey = (
+    process.env.VITE_VAPID_PUBLIC_KEY ||
+    clientEnv.VITE_VAPID_PUBLIC_KEY ||
+    rootEnv.VITE_VAPID_PUBLIC_KEY ||
+    process.env.VAPID_PUBLIC_KEY ||
+    clientEnv.VAPID_PUBLIC_KEY ||
+    rootEnv.VAPID_PUBLIC_KEY ||
+    ''
+  ).trim();
+
   // Safe build-time diagnostic (does NOT expose the actual ID value or any secret)
   const hasClientId = Boolean(googleClientId && googleClientId.length > 0);
   console.log(
@@ -34,6 +44,7 @@ export default defineConfig(({ mode }) => {
     plugins: [react(), tailwindcss()],
     define: {
       'import.meta.env.VITE_GOOGLE_CLIENT_ID': JSON.stringify(googleClientId),
+      'import.meta.env.VITE_VAPID_PUBLIC_KEY': JSON.stringify(vapidPublicKey),
     },
     server: {
       port: 5173,

@@ -78,6 +78,15 @@ const PomodoroSessionSchema = new mongoose.Schema(
     endTime: {
       type: Date,
     },
+    expectedEndTime: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+    completionNotificationSent: {
+      type: Boolean,
+      default: false,
+    },
     pauseCount: {
       type: Number,
       default: 0,

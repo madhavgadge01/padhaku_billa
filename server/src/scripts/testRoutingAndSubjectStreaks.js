@@ -112,10 +112,13 @@ async function runRoutingAndSubjectStreakTests() {
 
   // --- 2. INDEPENDENT SUBJECT STREAKS ALGORITHM TESTS ---
   console.log('\n--- 2. Independent Subject Streaks vs Main Streak ---');
-  const todayStr = '2026-10-29';
-  const day1 = '2026-10-27';
-  const day2 = '2026-10-28';
-  const day3 = '2026-10-29';
+  const d3 = new Date();
+  const d2 = new Date(Date.now() - 86400000);
+  const d1 = new Date(Date.now() - 2 * 86400000);
+  const day3 = getStudyDayDate(d3, '06:00');
+  const day2 = getStudyDayDate(d2, '06:00');
+  const day1 = getStudyDayDate(d1, '06:00');
+  const todayStr = day3;
 
   // Backend: 3 consecutive days (Oct 27, Oct 28, Oct 29)
   const backendStreak = calculateSubjectStreak([day1, day2, day3], todayStr);
@@ -153,6 +156,8 @@ async function runRoutingAndSubjectStreakTests() {
   await mongoose.connect(MONGODB_URI);
   console.log(`Connected to MongoDB: ${MONGODB_URI}`);
 
+  const todayKey = getStudyDayKey(new Date(), '06:00');
+
   const testUser = await User.create({
     email: `streak_test_${Date.now()}@lifelevel.app`,
     passwordHash: 'test_password_hash_123',
@@ -169,26 +174,27 @@ async function runRoutingAndSubjectStreakTests() {
       monday: [],
       tuesday: [],
       wednesday: [],
-      thursday: [
+      thursday: [],
+      friday: [],
+      saturday: [],
+      sunday: [],
+      [todayKey]: [
         { id: 'subj_backend', name: 'Backend', color: '#3B82F6', targetMinutes: 60, completedDates: [day1, day2, day3] },
         { id: 'subj_english', name: 'English', color: '#10B981', targetMinutes: 30, completedDates: [day1, day2, day3] },
         { id: 'subj_math', name: 'Mathematics', color: '#F59E0B', targetMinutes: 45, completedDates: [day1, day2, day3] },
         { id: 'subj_cs', name: 'Computer Science', color: '#EC4899', targetMinutes: 45, completedDates: [] },
       ],
-      friday: [],
-      saturday: [],
-      sunday: [],
     },
   });
 
   // Run checkAndRefreshStreaks for the user
   const refreshResult = await checkAndRefreshStreaks(testUser);
-  const thursdayTasks = testUser.weeklyTimetable.thursday;
+  const todayTasks = testUser.weeklyTimetable[todayKey];
 
-  const backendObj = thursdayTasks.find((t) => t.name === 'Backend');
-  const englishObj = thursdayTasks.find((t) => t.name === 'English');
-  const mathObj = thursdayTasks.find((t) => t.name === 'Mathematics');
-  const csObj = thursdayTasks.find((t) => t.name === 'Computer Science');
+  const backendObj = todayTasks.find((t) => t.name === 'Backend');
+  const englishObj = todayTasks.find((t) => t.name === 'English');
+  const mathObj = todayTasks.find((t) => t.name === 'Mathematics');
+  const csObj = todayTasks.find((t) => t.name === 'Computer Science');
 
   assert(backendObj.currentStreak === 3, 'Persisted Backend streak is 3 days');
   assert(englishObj.currentStreak === 3, 'Persisted English streak is 3 days');

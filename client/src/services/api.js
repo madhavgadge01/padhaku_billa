@@ -308,4 +308,30 @@ export const api = {
       headers: getHeaders(),
       body: JSON.stringify(socialLinks),
     }).then(handleResponse),
+
+  // Push Notifications & Background Alerts
+  getVapidPublicKey: () =>
+    fetch(`${API_BASE}/notifications/vapid-public-key`, {
+      headers: getHeaders(),
+    }).then(handleResponse),
+
+  subscribePush: (subscription) =>
+    fetch(`${API_BASE}/notifications/subscribe`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ subscription }),
+    }).then(handleResponse),
+
+  unsubscribePush: (endpoint) =>
+    fetch(`${API_BASE}/notifications/unsubscribe`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ endpoint }),
+    }).then(handleResponse),
+
+  testPushNotification: () =>
+    fetch(`${API_BASE}/notifications/test`, {
+      method: 'POST',
+      headers: getHeaders(),
+    }).then(handleResponse),
 };

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import confetti from 'canvas-confetti';
 import {
   Play,
@@ -21,6 +21,17 @@ import { getSubjectColor } from '../utils/subjectColors.js';
 import { getStudyDayKey, getStudyDayDate, formatResetTimeDisplay } from '../utils/dateUtils.js';
 import { sounds } from '../audio/soundEffects.js';
 import { api } from '../services/api.js';
+import {
+  getPushNotificationStatus,
+  subscribeToPushNotifications,
+  unsubscribeFromPushNotifications,
+  isPushSupported,
+  isIOS,
+  isStandalonePWA,
+} from '../utils/pushNotifications.js';
+
+const TIMER_STORAGE_KEY = 'padhaku_billa_active_timer';
+const TIMER_CHANNEL_NAME = 'padhaku_billa_timer_channel';
 
 export const formatTimerHMS = (totalSeconds) => {
   const totalSecs = Math.max(0, Math.floor(totalSeconds || 0));
@@ -107,12 +118,115 @@ export const FocusPage = ({
 
   // Active elapsed segment timestamp tracking
   const activeSegmentStartRef = useRef(null);
+  const sessionEndTimestampRef = useRef(null);
+  const baseAccumulatedRef = useRef(0);
+  const baseIntervalRef = useRef(0);
+  const isRunningRef = useRef(isRunning);
+  const isPausedRef = useRef(isPaused);
+  const customMinutesRef = useRef(customMinutes);
+  const totalSecondsRef = useRef(totalSeconds);
+  const timerBroadcastChannelRef = useRef(null);
+
+  // Keep refs in sync with state
+  useEffect(() => {
+    isRunningRef.current = isRunning;
+    isPausedRef.current = isPaused;
+  }, [isRunning, isPaused]);
+
+  useEffect(() => {
+    customMinutesRef.current = customMinutes;
+  }, [customMinutes]);
+
+  useEffect(() => {
+    totalSecondsRef.current = totalSeconds;
+  }, [totalSeconds]);
 
   // Remaining time in seconds (counts down toward daily goal)
   const [timeLeft, setTimeLeft] = useState(customMinutes * 60);
   const [totalSeconds, setTotalSeconds] = useState(customMinutes * 60);
   const timerRef = useRef(null);
   const isCompletingRef = useRef(false);
+
+  // Push Notification state
+  const [pushStatus, setPushStatus] = useState({
+    supported: false,
+    permission: 'default',
+    subscribed: false,
+    loading: false,
+  });
+  const [pushNotice, setPushNotice] = useState(null);
+
+  useEffect(() => {
+    getPushNotificationStatus().then((status) => {
+      setPushStatus(status);
+    });
+  }, []);
+
+  const handleTogglePushNotifications = async () => {
+    sounds.playClick();
+    setPushStatus((prev) => ({ ...prev, loading: true }));
+    setPushNotice(null);
+
+    try {
+      if (pushStatus.subscribed) {
+        await unsubscribeFromPushNotifications();
+        const updated = await getPushNotificationStatus();
+        setPushStatus(updated);
+        setPushNotice({ type: 'info', text: 'Push notifications disabled.' });
+      } else {
+        await subscribeToPushNotifications();
+        const updated = await getPushNotificationStatus();
+        setPushStatus(updated);
+        setPushNotice({
+          type: 'success',
+          text: '🎉 Background alerts enabled! You will be notified the second your timer ends, even if the screen is off.',
+        });
+      }
+    } catch (err) {
+      console.warn('Push subscription notice:', err);
+      const updated = await getPushNotificationStatus();
+      setPushStatus(updated);
+      setPushNotice({
+        type: 'error',
+        text: err?.message || 'Could not enable notifications. Please check your browser permissions.',
+      });
+    } finally {
+      setTimeout(() => setPushNotice(null), 6000);
+    }
+  };
+
+  const handleTestPushNotification = async () => {
+    sounds.playClick();
+    try {
+      await api.testPushNotification();
+      setPushNotice({ type: 'success', text: '🔔 Test alert sent! Check your notification tray.' });
+    } catch (e) {
+      setPushNotice({ type: 'error', text: 'Failed to send test alert. Make sure notifications are enabled.' });
+    } finally {
+      setTimeout(() => setPushNotice(null), 5000);
+    }
+  };
+
+  // Live browser tab title countdown
+  useEffect(() => {
+    const defaultTitle = 'Padhaku Billa';
+    const hDisplay = Math.floor(timeLeft / 3600);
+    if (isRunning && !isPaused) {
+      const timeStr = hDisplay > 0 ? formatTimerHMS(timeLeft) : formatMMSS(timeLeft);
+      document.title = `🍃 ${timeStr} | Padhaku Billa`;
+    } else if (isAlarmPlaying || completionData) {
+      document.title = `⏰ 00:00 | Session Complete! | Padhaku Billa`;
+    } else if (isPaused) {
+      const timeStr = hDisplay > 0 ? formatTimerHMS(timeLeft) : formatMMSS(timeLeft);
+      document.title = `⏸️ ${timeStr} | Padhaku Billa`;
+    } else {
+      document.title = defaultTitle;
+    }
+
+    return () => {
+      document.title = defaultTitle;
+    };
+  }, [isRunning, isPaused, timeLeft, isAlarmPlaying, completionData]);
 
   // Notify parent of genuine active running state for centralized navigation guard
   const isActivelyRunning = isRunning && !isPaused;
@@ -194,8 +308,13 @@ export const FocusPage = ({
       const token = localStorage.getItem('lifelevel_token');
       if (!currId || !token) return;
 
-      const totalActual = accumulatedElapsedRef.current || 0;
-      const currentInterval = intervalElapsedRef.current || 0;
+      const now = Date.now();
+      const segmentElapsed = (isRunningRef.current && !isPausedRef.current && activeSegmentStartRef.current)
+        ? Math.max(0, Math.floor((now - activeSegmentStartRef.current) / 1000))
+        : 0;
+      const totalActual = Math.max(accumulatedElapsedRef.current || 0, (baseAccumulatedRef.current || 0) + segmentElapsed);
+      const currentInterval = Math.max(intervalElapsedRef.current || 0, (baseIntervalRef.current || 0) + segmentElapsed);
+
       if (totalActual <= 0 && currentInterval <= 0) return;
 
       const payload = JSON.stringify({
@@ -203,10 +322,8 @@ export const FocusPage = ({
         intervalSeconds: currentInterval,
         closing: isClosing,
       });
-      // const url = `http://localhost:5001/api/pomodoro/${currId}/checkpoint?token=${encodeURIComponent(token)}`;
 
-
-            const url = `https://tell-profession-reverse-optimum.trycloudflare.com/api/pomodoro/${currId}/checkpoint?token=${encodeURIComponent(token)}`;
+      const url = `https://tell-profession-reverse-optimum.trycloudflare.com/api/pomodoro/${currId}/checkpoint?token=${encodeURIComponent(token)}`;
 
       if (navigator.sendBeacon) {
         const blob = new Blob([payload], { type: 'application/json' });
@@ -228,7 +345,7 @@ export const FocusPage = ({
     };
 
     const handlePageHide = () => {
-      flushActiveFocus(true);
+      flushActiveFocus(false);
     };
 
     window.addEventListener('visibilitychange', handleVisibilityChange);
@@ -397,26 +514,345 @@ export const FocusPage = ({
     setIsPaused(false);
   };
 
-  // Timer loop - precise 1-second interval incrementing verified focus and interval time
+  // Mutable reference to handleComplete for circular dependency resolution
+  const handleCompleteRef = useRef(null);
+
+  // Synchronize active timer state to localStorage
+  const syncTimerToStorage = useCallback((overrides = {}) => {
+    try {
+      const state = {
+        sessionId: sessionIdRef.current,
+        subjectId: selectedSubject?.id || selectedSubject?._id,
+        subjectName: selectedSubject?.name || activeTask?.name || customSubjectName || 'Focus Task',
+        color: selectedColor,
+        timerMode,
+        customMinutes: customMinutesRef.current,
+        totalSeconds: totalSecondsRef.current,
+        sessionEndTimestamp: sessionEndTimestampRef.current,
+        activeSegmentStartTimestamp: activeSegmentStartRef.current,
+        baseAccumulatedSeconds: baseAccumulatedRef.current,
+        baseIntervalSeconds: baseIntervalRef.current,
+        isRunning: isRunningRef.current,
+        isPaused: isPausedRef.current,
+        pauseCount,
+        timeLeft,
+        updatedAt: Date.now(),
+        ...overrides,
+      };
+      localStorage.setItem(TIMER_STORAGE_KEY, JSON.stringify(state));
+      return state;
+    } catch (e) {
+      console.warn('Could not save timer to localStorage', e);
+      return null;
+    }
+  }, [selectedSubject, activeTask, customSubjectName, selectedColor, timerMode, pauseCount, timeLeft]);
+
+  // Clear timer state from localStorage
+  const clearTimerStorage = useCallback(() => {
+    try {
+      localStorage.removeItem(TIMER_STORAGE_KEY);
+    } catch (e) {}
+  }, []);
+
+  // Broadcast timer events across all open tabs
+  const broadcastTimerEvent = useCallback((type, payload = {}) => {
+    try {
+      if (timerBroadcastChannelRef.current) {
+        timerBroadcastChannelRef.current.postMessage({
+          type,
+          payload,
+          senderId: Math.random(),
+          timestamp: Date.now(),
+        });
+      }
+    } catch (e) {}
+  }, []);
+
+  // Authoritative timestamp-based recalculation:
+  // Evaluates remaining seconds from sessionEndTimestamp - Date.now()
+  // Eliminates timer drift across background tabs, sleep, and phone screen lock
+  const recalculateFromTimestamps = useCallback(() => {
+    if (!isRunningRef.current || isPausedRef.current) return;
+    const now = Date.now();
+    const endTs = sessionEndTimestampRef.current;
+    if (!endTs) return;
+
+    const remaining = Math.max(0, Math.ceil((endTs - now) / 1000));
+    setTimeLeft(remaining);
+
+    const segmentElapsed = activeSegmentStartRef.current
+      ? Math.max(0, Math.floor((now - activeSegmentStartRef.current) / 1000))
+      : 0;
+
+    const maxGoal = totalSecondsRef.current || (customMinutesRef.current * 60) || 1500;
+    const currentTotal = Math.min(maxGoal, (baseAccumulatedRef.current || 0) + segmentElapsed);
+    accumulatedElapsedRef.current = currentTotal;
+    setAccumulatedSeconds(currentTotal);
+
+    const currentInterval = (baseIntervalRef.current || 0) + segmentElapsed;
+    intervalElapsedRef.current = currentInterval;
+    setIntervalSeconds(currentInterval);
+
+    if (remaining === 0 && !isCompletingRef.current) {
+      if (handleCompleteRef.current) {
+        handleCompleteRef.current();
+      }
+    }
+  }, []);
+
+  // Cross-tab message handler
+  const handleCrossTabSync = useCallback((msg) => {
+    if (!msg || !msg.type) return;
+    const { type, payload } = msg;
+
+    if (type === 'TIMER_START') {
+      if (payload.sessionId) {
+        sessionIdRef.current = payload.sessionId;
+        setSessionId(payload.sessionId);
+      }
+      if (payload.sessionEndTimestamp) {
+        sessionEndTimestampRef.current = payload.sessionEndTimestamp;
+      }
+      if (payload.durationMinutes) {
+        setCustomMinutes(payload.durationMinutes);
+        customMinutesRef.current = payload.durationMinutes;
+        setTotalSeconds(payload.durationMinutes * 60);
+        totalSecondsRef.current = payload.durationMinutes * 60;
+      }
+      isRunningRef.current = true;
+      isPausedRef.current = false;
+      setIsRunning(true);
+      setIsPaused(false);
+      recalculateFromTimestamps();
+    } else if (type === 'TIMER_RESUME') {
+      if (payload.sessionEndTimestamp) {
+        sessionEndTimestampRef.current = payload.sessionEndTimestamp;
+      }
+      isRunningRef.current = true;
+      isPausedRef.current = false;
+      setIsRunning(true);
+      setIsPaused(false);
+      recalculateFromTimestamps();
+    } else if (type === 'TIMER_PAUSE') {
+      isRunningRef.current = false;
+      isPausedRef.current = true;
+      setIsRunning(false);
+      setIsPaused(true);
+      sessionEndTimestampRef.current = null;
+      activeSegmentStartRef.current = null;
+      if (typeof payload.timeLeft === 'number') {
+        setTimeLeft(payload.timeLeft);
+      }
+    } else if (type === 'TIMER_RESET') {
+      isRunningRef.current = false;
+      isPausedRef.current = false;
+      setIsRunning(false);
+      setIsPaused(false);
+      sessionEndTimestampRef.current = null;
+      activeSegmentStartRef.current = null;
+      setTimeLeft(totalSecondsRef.current || 1500);
+    } else if (type === 'TIMER_COMPLETE') {
+      isCompletingRef.current = true;
+      isRunningRef.current = false;
+      isPausedRef.current = false;
+      setIsRunning(false);
+      setIsPaused(false);
+      sessionEndTimestampRef.current = null;
+      activeSegmentStartRef.current = null;
+      setTimeLeft(0);
+      sounds.startAlarm();
+      setIsAlarmPlaying(true);
+    }
+  }, [recalculateFromTimestamps]);
+
+  // Multi-tab synchronization (BroadcastChannel + storage events)
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      try {
+        const channel = new BroadcastChannel(TIMER_CHANNEL_NAME);
+        timerBroadcastChannelRef.current = channel;
+        channel.onmessage = (event) => {
+          handleCrossTabSync(event.data);
+        };
+      } catch (e) {
+        console.warn('BroadcastChannel initialization error:', e);
+      }
+    }
+
+    const handleStorageEvent = (e) => {
+      if (e.key === TIMER_STORAGE_KEY && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          const now = Date.now();
+          if (parsed.isRunning && !parsed.isPaused && parsed.sessionEndTimestamp) {
+            if (now >= parsed.sessionEndTimestamp) {
+              if (!isCompletingRef.current && handleCompleteRef.current) {
+                handleCompleteRef.current();
+              }
+            } else {
+              sessionEndTimestampRef.current = parsed.sessionEndTimestamp;
+              activeSegmentStartRef.current = parsed.activeSegmentStartTimestamp || now;
+              baseAccumulatedRef.current = parsed.baseAccumulatedSeconds || 0;
+              baseIntervalRef.current = parsed.baseIntervalSeconds || 0;
+              isRunningRef.current = true;
+              isPausedRef.current = false;
+              setIsRunning(true);
+              setIsPaused(false);
+              recalculateFromTimestamps();
+            }
+          } else if (parsed.isPaused) {
+            isRunningRef.current = false;
+            isPausedRef.current = true;
+            setIsRunning(false);
+            setIsPaused(true);
+            sessionEndTimestampRef.current = null;
+            activeSegmentStartRef.current = null;
+            if (typeof parsed.timeLeft === 'number') {
+              setTimeLeft(parsed.timeLeft);
+            }
+          }
+        } catch (err) {}
+      } else if (e.key === TIMER_STORAGE_KEY && !e.newValue) {
+        isRunningRef.current = false;
+        isPausedRef.current = false;
+        setIsRunning(false);
+        setIsPaused(false);
+        sessionEndTimestampRef.current = null;
+        activeSegmentStartRef.current = null;
+        setTimeLeft(totalSecondsRef.current || 1500);
+      }
+    };
+
+    window.addEventListener('storage', handleStorageEvent);
+
+    return () => {
+      window.removeEventListener('storage', handleStorageEvent);
+      if (timerBroadcastChannelRef.current) {
+        timerBroadcastChannelRef.current.close();
+        timerBroadcastChannelRef.current = null;
+      }
+    };
+  }, [handleCrossTabSync, recalculateFromTimestamps]);
+
+  // Recalculate immediately on window focus, visibility change, and pageshow (mobile cache restore / device sleep wakeup)
+  useEffect(() => {
+    const handleWakeup = () => {
+      if (isRunningRef.current && !isPausedRef.current) {
+        recalculateFromTimestamps();
+      }
+    };
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        handleWakeup();
+      }
+    };
+
+    window.addEventListener('focus', handleWakeup);
+    window.addEventListener('pageshow', handleWakeup);
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      window.removeEventListener('focus', handleWakeup);
+      window.removeEventListener('pageshow', handleWakeup);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [recalculateFromTimestamps]);
+
+  // Restore running timer from localStorage on mount
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(TIMER_STORAGE_KEY);
+      if (!stored) return;
+      const data = JSON.parse(stored);
+      if (!data) return;
+
+      const now = Date.now();
+      if (data.isRunning && !data.isPaused && data.sessionEndTimestamp) {
+        if (now >= data.sessionEndTimestamp) {
+          // Finished while away: award coins, play alarm, present dialog
+          if (data.sessionId) {
+            sessionIdRef.current = data.sessionId;
+            setSessionId(data.sessionId);
+          }
+          if (data.totalSeconds) {
+            setTotalSeconds(data.totalSeconds);
+            setAccumulatedSeconds(data.totalSeconds);
+            accumulatedElapsedRef.current = data.totalSeconds;
+          }
+          setTimeLeft(0);
+          sessionEndTimestampRef.current = null;
+          clearTimerStorage();
+          if (handleCompleteRef.current) {
+            handleCompleteRef.current();
+          }
+        } else {
+          // Still active: restore countdown seamlessly
+          const remSecs = Math.max(0, Math.ceil((data.sessionEndTimestamp - now) / 1000));
+          if (data.sessionId) {
+            sessionIdRef.current = data.sessionId;
+            setSessionId(data.sessionId);
+          }
+          sessionEndTimestampRef.current = data.sessionEndTimestamp;
+          activeSegmentStartRef.current = data.activeSegmentStartTimestamp || now;
+          baseAccumulatedRef.current = data.baseAccumulatedSeconds || 0;
+          baseIntervalRef.current = data.baseIntervalSeconds || 0;
+          if (data.customMinutes) {
+            setCustomMinutes(data.customMinutes);
+            customMinutesRef.current = data.customMinutes;
+          }
+          if (data.totalSeconds) {
+            setTotalSeconds(data.totalSeconds);
+            totalSecondsRef.current = data.totalSeconds;
+          }
+          setTimeLeft(remSecs);
+
+          const elapsedInSegment = Math.max(0, Math.floor((now - (data.activeSegmentStartTimestamp || now)) / 1000));
+          const totalAcc = Math.min(data.totalSeconds || 1500, (data.baseAccumulatedSeconds || 0) + elapsedInSegment);
+          setAccumulatedSeconds(totalAcc);
+          accumulatedElapsedRef.current = totalAcc;
+
+          const totalInt = (data.baseIntervalSeconds || 0) + elapsedInSegment;
+          setIntervalSeconds(totalInt);
+          intervalElapsedRef.current = totalInt;
+
+          isRunningRef.current = true;
+          isPausedRef.current = false;
+          setIsRunning(true);
+          setIsPaused(false);
+          setPetFocusState(data.timerMode === 'focus' ? 'studying' : 'happy');
+        }
+      } else if (data.isPaused && typeof data.timeLeft === 'number') {
+        if (data.sessionId) {
+          sessionIdRef.current = data.sessionId;
+          setSessionId(data.sessionId);
+        }
+        if (data.customMinutes) setCustomMinutes(data.customMinutes);
+        if (data.totalSeconds) setTotalSeconds(data.totalSeconds);
+        setTimeLeft(data.timeLeft);
+        if (data.baseAccumulatedSeconds) {
+          setAccumulatedSeconds(data.baseAccumulatedSeconds);
+          accumulatedElapsedRef.current = data.baseAccumulatedSeconds;
+        }
+        isRunningRef.current = false;
+        isPausedRef.current = true;
+        setIsRunning(false);
+        setIsPaused(true);
+      }
+    } catch (e) {
+      console.warn('Error restoring timer from localStorage:', e);
+    }
+  }, [clearTimerStorage]);
+
+  // Precise 500ms ticker to keep the UI perfectly synchronized with wall-clock time
   useEffect(() => {
     if (isRunning && !isPaused) {
       setPetFocusState(timerMode === 'focus' ? 'studying' : 'happy');
+      recalculateFromTimestamps();
+
       timerRef.current = setInterval(() => {
-        // Increment active focus elapsed time
-        accumulatedElapsedRef.current = (accumulatedElapsedRef.current || 0) + 1;
-        setAccumulatedSeconds((prev) => prev + 1);
-
-        intervalElapsedRef.current = (intervalElapsedRef.current || 0) + 1;
-        setIntervalSeconds((prev) => prev + 1);
-
-        // Count down remaining time toward daily goal
-        setTimeLeft((prev) => {
-          if (prev <= 1) {
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
+        recalculateFromTimestamps();
+      }, 500);
     } else {
       if (timerRef.current) {
         clearInterval(timerRef.current);
@@ -433,12 +869,14 @@ export const FocusPage = ({
         timerRef.current = null;
       }
     };
-  }, [isRunning, isPaused, timerMode]);
+  }, [isRunning, isPaused, timerMode, recalculateFromTimestamps]);
 
   // Natural countdown completion trigger
   useEffect(() => {
     if (isRunning && !isPaused && timeLeft === 0 && !isCompletingRef.current) {
-      handleComplete();
+      if (handleCompleteRef.current) {
+        handleCompleteRef.current();
+      }
     }
   }, [timeLeft, isRunning, isPaused]);
 
@@ -520,33 +958,55 @@ export const FocusPage = ({
       setCompletionError(null);
       isCompletingRef.current = false;
 
-      const targetDurationSecs = customMinutes > 0 ? customMinutes * 60 : 25 * 60;
-      if (!totalSeconds || totalSeconds <= 0) {
-        setTotalSeconds(targetDurationSecs);
-      }
-      if (!timeLeft || timeLeft <= 0) {
-        setTimeLeft(targetDurationSecs);
-      }
+      const targetDurationSecs = (customMinutesRef.current > 0 ? customMinutesRef.current : 25) * 60;
+      setTotalSeconds(targetDurationSecs);
+      setTimeLeft(targetDurationSecs);
 
-      // Reset interval to 0 for a fresh 25-minute break eligibility interval
+      const now = Date.now();
+      sessionEndTimestampRef.current = now + targetDurationSecs * 1000;
+      activeSegmentStartRef.current = now;
+      baseAccumulatedRef.current = 0;
+      baseIntervalRef.current = 0;
       intervalElapsedRef.current = 0;
       setIntervalSeconds(0);
-      activeSegmentStartRef.current = Date.now();
+      accumulatedElapsedRef.current = 0;
+      setAccumulatedSeconds(0);
 
+      isRunningRef.current = true;
+      isPausedRef.current = false;
       setIsRunning(true);
       setIsPaused(false);
       setPetFocusState(timerMode === 'focus' ? 'studying' : 'happy');
       sounds.playTimerStart();
 
+      const subjectTitle = selectedSubject?.name || activeTask?.name || customSubjectName || 'Focus Task';
+      const subjectId = selectedSubject?.id || selectedSubject?._id || undefined;
+
+      syncTimerToStorage({
+        isRunning: true,
+        isPaused: false,
+        sessionEndTimestamp: sessionEndTimestampRef.current,
+        activeSegmentStartTimestamp: now,
+        baseAccumulatedSeconds: 0,
+        baseIntervalSeconds: 0,
+        timeLeft: targetDurationSecs,
+        totalSeconds: targetDurationSecs,
+      });
+
+      broadcastTimerEvent('TIMER_START', {
+        sessionEndTimestamp: sessionEndTimestampRef.current,
+        durationMinutes: customMinutesRef.current,
+        totalSeconds: targetDurationSecs,
+        subjectName: subjectTitle,
+      });
+
       if (timerMode === 'focus') {
-        const subjectTitle = selectedSubject?.name || activeTask?.name || customSubjectName || 'Focus Task';
-        const subjectId = selectedSubject?.id || selectedSubject?._id || undefined;
         const payload = {
           taskId: activeTask?._id || undefined,
           subjectId: subjectId,
           subjectName: subjectTitle,
           colorTag: selectedColor,
-          durationMinutes: customMinutes,
+          durationMinutes: customMinutesRef.current,
         };
 
         const startPromise = api.startSession(payload)
@@ -554,6 +1014,12 @@ export const FocusPage = ({
             if (res && res.success && res.session) {
               setSessionId(res.session._id);
               sessionIdRef.current = res.session._id;
+              syncTimerToStorage({ sessionId: res.session._id });
+              broadcastTimerEvent('TIMER_START', {
+                sessionId: res.session._id,
+                sessionEndTimestamp: sessionEndTimestampRef.current,
+                durationMinutes: customMinutesRef.current,
+              });
               return res.session._id;
             }
             return null;
@@ -566,6 +1032,8 @@ export const FocusPage = ({
       }
     } catch (err) {
       console.error('Failed to start timer:', err);
+      isRunningRef.current = true;
+      isPausedRef.current = false;
       setIsRunning(true);
       setIsPaused(false);
       setPetFocusState(timerMode === 'focus' ? 'studying' : 'happy');
@@ -579,11 +1047,19 @@ export const FocusPage = ({
       sounds.playClick();
       sounds.stopAlarm();
       setIsAlarmPlaying(false);
+      isCompletingRef.current = false;
 
+      const now = Date.now();
+      const remainingSecs = timeLeft > 0 ? timeLeft : (customMinutesRef.current || 25) * 60;
+      sessionEndTimestampRef.current = now + remainingSecs * 1000;
+      activeSegmentStartRef.current = now;
+      baseAccumulatedRef.current = accumulatedElapsedRef.current || 0;
+      baseIntervalRef.current = 0;
       intervalElapsedRef.current = 0;
       setIntervalSeconds(0);
-      activeSegmentStartRef.current = Date.now();
 
+      isRunningRef.current = true;
+      isPausedRef.current = false;
       setIsRunning(true);
       setIsPaused(false);
       setPetFocusState(timerMode === 'focus' ? 'studying' : 'happy');
@@ -595,6 +1071,22 @@ export const FocusPage = ({
           console.warn('Backend resume sync notice:', err?.message || err);
         });
       }
+
+      syncTimerToStorage({
+        isRunning: true,
+        isPaused: false,
+        sessionEndTimestamp: sessionEndTimestampRef.current,
+        activeSegmentStartTimestamp: now,
+        baseAccumulatedSeconds: baseAccumulatedRef.current,
+        baseIntervalSeconds: 0,
+        timeLeft: remainingSecs,
+      });
+
+      broadcastTimerEvent('TIMER_RESUME', {
+        sessionId: currId,
+        sessionEndTimestamp: sessionEndTimestampRef.current,
+        timeLeft: remainingSecs,
+      });
     } catch (err) {
       console.error('Failed to resume session:', err);
     }
@@ -630,14 +1122,38 @@ export const FocusPage = ({
         sounds.playClick();
       }
 
+      const now = Date.now();
+      const segmentElapsed = activeSegmentStartRef.current
+        ? Math.max(0, Math.floor((now - activeSegmentStartRef.current) / 1000))
+        : 0;
+
+      const currentTotal = (baseAccumulatedRef.current || 0) + segmentElapsed;
+      const currentInterval = (baseIntervalRef.current || 0) + segmentElapsed;
+
+      baseAccumulatedRef.current = currentTotal;
+      baseIntervalRef.current = currentInterval;
+      accumulatedElapsedRef.current = currentTotal;
+      setAccumulatedSeconds(currentTotal);
+      intervalElapsedRef.current = currentInterval;
+      setIntervalSeconds(currentInterval);
+
+      const currentRemaining = sessionEndTimestampRef.current
+        ? Math.max(0, Math.ceil((sessionEndTimestampRef.current - now) / 1000))
+        : timeLeft;
+      setTimeLeft(currentRemaining);
+
+      sessionEndTimestampRef.current = null;
+      activeSegmentStartRef.current = null;
+
+      isRunningRef.current = false;
+      isPausedRef.current = true;
       setIsRunning(false);
       setIsPaused(true);
       setPetFocusState('idle');
-      activeSegmentStartRef.current = null;
 
       const currId = sessionIdRef.current || sessionId;
-      const intervalSecs = intervalElapsedRef.current || 0;
-      const totalActual = accumulatedElapsedRef.current || 0;
+      const intervalSecs = currentInterval;
+      const totalActual = currentTotal;
 
       if (currId) {
         const actionId = `break_${currId}_${Date.now()}_${intervalSecs}`;
@@ -661,6 +1177,22 @@ export const FocusPage = ({
             console.warn('Backend pause sync notice:', err?.message || err);
           });
       }
+
+      syncTimerToStorage({
+        isRunning: false,
+        isPaused: true,
+        sessionEndTimestamp: null,
+        activeSegmentStartTimestamp: null,
+        baseAccumulatedSeconds: currentTotal,
+        baseIntervalSeconds: currentInterval,
+        timeLeft: currentRemaining,
+      });
+
+      broadcastTimerEvent('TIMER_PAUSE', {
+        sessionId: currId,
+        timeLeft: currentRemaining,
+        intervalSeconds: currentInterval,
+      });
     } catch (err) {
       console.error('Failed to pause session:', err);
     }
@@ -680,6 +1212,12 @@ export const FocusPage = ({
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
+    sessionEndTimestampRef.current = null;
+    activeSegmentStartRef.current = null;
+    baseAccumulatedRef.current = 0;
+    baseIntervalRef.current = 0;
+    isRunningRef.current = false;
+    isPausedRef.current = false;
     setIsRunning(false);
     setIsPaused(false);
     setSessionId(null);
@@ -688,11 +1226,14 @@ export const FocusPage = ({
     setAccumulatedSeconds(0);
     intervalElapsedRef.current = 0;
     setIntervalSeconds(0);
-    setTimeLeft(totalSeconds > 0 ? totalSeconds : customMinutes * 60);
+    const resetDuration = totalSeconds > 0 ? totalSeconds : (customMinutesRef.current || 25) * 60;
+    setTimeLeft(resetDuration);
     setPauseCount(0);
     setPetFocusState('idle');
     setCompletionData(null);
     setCompletionError(null);
+    clearTimerStorage();
+    broadcastTimerEvent('TIMER_RESET', {});
   };
 
   // Explicit Stop Alarm action
@@ -710,15 +1251,21 @@ export const FocusPage = ({
     setSessionId(null);
     sessionIdRef.current = null;
     isCompletingRef.current = false;
+    sessionEndTimestampRef.current = null;
+    activeSegmentStartRef.current = null;
+    baseAccumulatedRef.current = 0;
+    baseIntervalRef.current = 0;
     accumulatedElapsedRef.current = 0;
     setAccumulatedSeconds(0);
     intervalElapsedRef.current = 0;
     setIntervalSeconds(0);
-    const nextDuration = (customMinutes > 0 ? customMinutes : 25) * 60;
+    const nextDuration = (customMinutesRef.current > 0 ? customMinutesRef.current : 25) * 60;
     setTimeLeft(nextDuration);
     setTotalSeconds(nextDuration);
     setPauseCount(0);
     setPetFocusState('idle');
+    clearTimerStorage();
+    broadcastTimerEvent('TIMER_RESET', {});
   };
 
   // Complete Session (Protected against double calls and duplicate coin awards)
@@ -736,10 +1283,15 @@ export const FocusPage = ({
       timerRef.current = null;
     }
 
+    sessionEndTimestampRef.current = null;
+    activeSegmentStartRef.current = null;
+    isRunningRef.current = false;
+    isPausedRef.current = false;
     setIsRunning(false);
     setIsPaused(false);
+    setTimeLeft(0);
     setPetFocusState('happy');
-    activeSegmentStartRef.current = null;
+    clearTimerStorage();
 
     // Confetti celebration
     try {
@@ -762,6 +1314,8 @@ export const FocusPage = ({
       } catch (e) {}
     }
 
+    broadcastTimerEvent('TIMER_COMPLETE', { sessionId: currId });
+
     // Emergency start if no session ID was registered yet
     if (!currId && timerMode === 'focus') {
       try {
@@ -772,7 +1326,7 @@ export const FocusPage = ({
           subjectId,
           subjectName: subjectTitle,
           colorTag: selectedColor,
-          durationMinutes: customMinutes,
+          durationMinutes: customMinutesRef.current,
         });
         if (startRes?.session?._id) {
           currId = startRes.session._id;
@@ -811,6 +1365,11 @@ export const FocusPage = ({
       setIsSubmittingCompletion(false);
     }
   };
+
+  // Keep handleCompleteRef updated
+  useEffect(() => {
+    handleCompleteRef.current = handleComplete;
+  });
 
   // Retry completion if network failed
   const handleRetryCompletion = async () => {
@@ -1053,6 +1612,87 @@ export const FocusPage = ({
               Start Next Focus Session
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Background Notification Status / Permissions Banner */}
+      {pushStatus.supported && (
+        <div className="space-y-2">
+          {pushStatus.subscribed ? (
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 px-4 py-2.5 rounded-2xl bg-emerald-50/80 dark:bg-emerald-950/30 border border-emerald-200/60 dark:border-emerald-800/50 text-xs">
+              <div className="flex items-center space-x-2 text-emerald-800 dark:text-emerald-300 font-bold">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
+                <Bell className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
+                <span>Background alerts active (Lock-screen & background push enabled)</span>
+              </div>
+              <div className="flex items-center space-x-3 self-end sm:self-auto">
+                <button
+                  type="button"
+                  onClick={handleTestPushNotification}
+                  className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 hover:underline cursor-pointer"
+                >
+                  Test Alert
+                </button>
+                <span className="text-emerald-300 dark:text-emerald-700">•</span>
+                <button
+                  type="button"
+                  onClick={handleTogglePushNotifications}
+                  disabled={pushStatus.loading}
+                  className="text-[11px] text-[#576560] dark:text-[#8BA398] hover:text-rose-600 cursor-pointer"
+                >
+                  Disable
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 px-4 py-2.5 rounded-2xl bg-[#FAF8F5] dark:bg-[#1C2E29] border border-[#EAE5DD] dark:border-[#253D35] text-xs">
+              <div className="flex items-center space-x-2.5">
+                <div className="w-7 h-7 rounded-xl bg-[#E8F5EE] dark:bg-[#162420] text-[#1B3B2F] dark:text-[#34D399] flex items-center justify-center flex-shrink-0">
+                  <Bell className="w-3.5 h-3.5" />
+                </div>
+                <div className="text-left">
+                  <span className="font-extrabold text-[#1C2A24] dark:text-[#F2F7F4]">
+                    Enable Background Session Alerts
+                  </span>
+                  <span className="text-[#576560] dark:text-[#8BA398] text-[11px] ml-2 hidden sm:inline">
+                    Know the exact second your session ends, even when your phone is locked or browser is closed.
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleTogglePushNotifications}
+                disabled={pushStatus.loading}
+                className="w-full sm:w-auto px-3.5 py-1.5 rounded-xl bg-[#1B3B2F] hover:bg-[#142C23] text-white font-black text-[11px] shadow-xs transition cursor-pointer flex-shrink-0 flex items-center justify-center space-x-1.5"
+              >
+                <Bell className="w-3 h-3" />
+                <span>{pushStatus.loading ? 'Enabling...' : 'Enable Alerts'}</span>
+              </button>
+            </div>
+          )}
+
+          {/* iOS Safari Tip */}
+          {isIOS() && !isStandalonePWA() && (
+            <div className="text-[11px] text-[#576560] dark:text-[#8BA398] bg-amber-50 dark:bg-amber-950/20 border border-amber-200/60 dark:border-amber-800/40 rounded-xl px-3 py-1.5 flex items-center space-x-2">
+              <span>💡</span>
+              <span>
+                <strong>iPhone / iPad tip:</strong> Tap <strong>Share</strong> ➔ <strong>'Add to Home Screen'</strong> to allow background push notifications when your phone is locked.
+              </span>
+            </div>
+          )}
+
+          {/* Notification feedback message */}
+          {pushNotice && (
+            <div
+              className={`p-2.5 rounded-xl text-xs font-bold animate-in fade-in duration-200 ${
+                pushNotice.type === 'error'
+                  ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 border border-rose-200 dark:border-rose-800'
+                  : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+              }`}
+            >
+              {pushNotice.text}
+            </div>
+          )}
         </div>
       )}
 
