@@ -248,6 +248,18 @@ router.get('/dashboard', requireAuth, async (req, res) => {
     const averageDailyHours = Math.round((totalHoursLogged / uniqueDays) * 10) / 10;
     const averageDailyMinutes = Math.round(totalMinutesLogged / uniqueDays);
 
+    // Rolling 24-hour focus time: genuine active focus time from sessions in the last 24 hours
+    const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const rolling24hMinutes = Math.round(
+      allSessions
+        .filter((s) => {
+          const sessEnd = new Date(s.endTime || s.startTime);
+          return sessEnd.getTime() >= oneDayAgo.getTime();
+        })
+        .reduce((acc, s) => acc + calculateSessionFocusMinutes(s), 0)
+    );
+    const rolling24hHours = Math.round((rolling24hMinutes / 60) * 10) / 10;
+
     // 6. Calibrated Focus Level (0 - 100%) based on 14-day rolling actual focus hours/day
     const todayStr = getStudyDayDate(new Date(), resetTime, tzOffset);
     const todayStats = dateMap[todayStr] || { minutes: 0, sessions: 0 };
@@ -299,6 +311,8 @@ router.get('/dashboard', requireAuth, async (req, res) => {
       summary: {
         totalHoursLogged,
         totalMinutesLogged,
+        rolling24hMinutes,
+        rolling24hHours,
         totalSessionsCount,
         totalQuestsCompleted,
         totalCoinsAccumulated,

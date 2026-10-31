@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Clock, CheckCircle2, Trash2, X, Sparkles, Tag, BookOpen, AlertCircle } from 'lucide-react';
 import { sounds } from '../audio/soundEffects.js';
+import { FocusActionConfirmModal } from './FocusActionConfirmModal.jsx';
 
 export const formatTimerHMS = (totalSeconds) => {
   const totalSecs = Math.max(0, Math.floor(totalSeconds || 0));
@@ -23,6 +24,7 @@ export const StopwatchSaveModal = ({
   const [activityDescription, setActivityDescription] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
 
   // Quick suggestions from user requirements
   const SUGGESTIONS = [
@@ -106,9 +108,7 @@ export const StopwatchSaveModal = ({
 
   const handleDiscardClick = () => {
     sounds.playClick?.();
-    if (window.confirm('Are you sure you want to discard this stopwatch session? This time will not be recorded in your focus history.')) {
-      onDiscard();
-    }
+    setShowDiscardConfirm(true);
   };
 
   return (
@@ -237,6 +237,22 @@ export const StopwatchSaveModal = ({
           </div>
         </form>
       </div>
+
+      {/* Discard Session Safeguard Confirmation */}
+      <FocusActionConfirmModal
+        isOpen={showDiscardConfirm}
+        title="Discard Stopwatch Session?"
+        subtitle="Are you sure you want to discard this session? This focus time will not be recorded in your focus history."
+        confirmText="Confirm Discard"
+        cancelText="Keep Session"
+        isDestructive={true}
+        icon={Trash2}
+        onConfirm={() => {
+          setShowDiscardConfirm(false);
+          onDiscard();
+        }}
+        onCancel={() => setShowDiscardConfirm(false)}
+      />
     </div>
   );
 };

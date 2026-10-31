@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -10,6 +10,7 @@ import {
   X,
   Tag,
   CheckCircle2,
+  TrendingUp,
 } from 'lucide-react';
 import { sounds } from '../audio/soundEffects.js';
 
@@ -18,7 +19,7 @@ export const LIGHT_BROWN = '#C48255';
 export const DARK_BROWN = '#5D3318';
 
 /**
- * Format minutes into readable text: "2h 35m", "45m", "0m"
+ * Format minutes into compact readable text: "4h 18m", "45m", "0m"
  */
 export function formatMinutes(mins = 0) {
   if (!mins || mins <= 0) return '0m';
@@ -27,6 +28,36 @@ export function formatMinutes(mins = 0) {
   if (h > 0 && m > 0) return `${h}h ${m}m`;
   if (h > 0) return `${h}h`;
   return `${m}m`;
+}
+
+/**
+ * Format minutes into detailed text: "2 hours 15 minutes", "45 minutes", "1 hour"
+ */
+export function formatDetailedDuration(mins = 0) {
+  if (!mins || mins <= 0) return '0 minutes';
+  const totalM = Math.round(mins);
+  const h = Math.floor(totalM / 60);
+  const m = totalM % 60;
+  if (h > 0 && m > 0) {
+    return `${h} ${h === 1 ? 'hour' : 'hours'} ${m} ${m === 1 ? 'minute' : 'minutes'}`;
+  }
+  if (h > 0) {
+    return `${h} ${h === 1 ? 'hour' : 'hours'}`;
+  }
+  return `${m} ${m === 1 ? 'minute' : 'minutes'}`;
+}
+
+/**
+ * Format minutes for inside the donut center: "4 hr 18 min", "45 min", "0 min"
+ */
+export function formatDonutCenterTime(mins = 0) {
+  if (!mins || mins <= 0) return '0 min';
+  const totalM = Math.round(mins);
+  const h = Math.floor(totalM / 60);
+  const m = totalM % 60;
+  if (h > 0 && m > 0) return `${h} hr ${m} min`;
+  if (h > 0) return `${h} hr`;
+  return `${m} min`;
 }
 
 /**
@@ -41,19 +72,46 @@ export function formatDateKey(d) {
 }
 
 /**
- * Format "YYYY-MM-DD" to "31 October 2026"
+ * Format "YYYY-MM-DD" to "1 November 2026"
  */
 export function formatReadableDate(dStr) {
   if (!dStr) return '';
   try {
-    const [y, m, d] = dStr.split('-').map(Number);
-    const dateObj = new Date(y, m - 1, d);
+    const parts = dStr.split('-');
+    if (parts.length === 3) {
+      const [y, m, d] = parts.map(Number);
+      const dateObj = new Date(Date.UTC(y, m - 1, d));
+      const day = dateObj.getUTCDate();
+      const month = dateObj.toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' });
+      const year = dateObj.getUTCFullYear();
+      return `${day} ${month} ${year}`;
+    }
+    const dateObj = new Date(dStr);
+    if (isNaN(dateObj.getTime())) return dStr;
     const day = dateObj.getDate();
     const month = dateObj.toLocaleDateString('en-US', { month: 'long' });
     const year = dateObj.getFullYear();
     return `${day} ${month} ${year}`;
   } catch (e) {
     return dStr;
+  }
+}
+
+/**
+ * Format timestamp to "10:30 AM"
+ */
+export function formatSessionTime(isoOrDate) {
+  if (!isoOrDate) return '—';
+  try {
+    const d = new Date(isoOrDate);
+    if (isNaN(d.getTime())) return '—';
+    return d.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    });
+  } catch (e) {
+    return '—';
   }
 }
 
@@ -80,6 +138,34 @@ export function getWeekRange(d) {
   };
 }
 
+/**
+ * Helper to convert polar coordinates to Cartesian for SVG drawing
+ */
+function polarToCartesian(cx, cy, r, angleInDegrees) {
+  const angleInRadians = (angleInDegrees * Math.PI) / 180.0;
+  return {
+    x: Math.round((cx + r * Math.cos(angleInRadians)) * 100) / 100,
+    y: Math.round((cy + r * Math.sin(angleInRadians)) * 100) / 100,
+  };
+}
+
+/**
+ * Build SVG path data for a circular arc from startAngle to endAngle (in degrees)
+ */
+function describeArc(cx, cy, r, startAngle, endAngle) {
+  const delta = endAngle - startAngle;
+  if (delta >= 359.999) {
+    const mid = startAngle + 180;
+    const pStart = polarToCartesian(cx, cy, r, startAngle);
+    const pMid = polarToCartesian(cx, cy, r, mid);
+    return `M ${pStart.x} ${pStart.y} A ${r} ${r} 0 1 1 ${pMid.x} ${pMid.y} A ${r} ${r} 0 1 1 ${pStart.x} ${pStart.y}`;
+  }
+  const start = polarToCartesian(cx, cy, r, startAngle);
+  const end = polarToCartesian(cx, cy, r, endAngle);
+  const largeArcFlag = delta <= 180 ? '0' : '1';
+  return `M ${start.x} ${start.y} A ${r} ${r} 0 ${largeArcFlag} 1 ${end.x} ${end.y}`;
+}
+
 export const FocusTimeDistribution = ({
   sessions = [],
   tagDistribution = [],
@@ -95,9 +181,11 @@ export const FocusTimeDistribution = ({
   // Currently selected reference date for Week mode (default: today)
   const [selectedWeekDate, setSelectedWeekDate] = useState(() => new Date());
 
-  // Interactive hover & click tooltip for stacked bar segments
+  // Interactive selection and hover for donut chart segments
+  const [selectedSegmentId, setSelectedSegmentId] = useState(null);
   const [hoveredSegmentId, setHoveredSegmentId] = useState(null);
-  const [clickedSegment, setClickedSegment] = useState(null);
+
+  const containerRef = useRef(null);
 
   // Map of subject name -> color from user's timetable for perfect consistency
   const timetableColorMap = useMemo(() => {
@@ -153,6 +241,7 @@ export const FocusTimeDistribution = ({
         ...s,
         id: s.id || s._id || `sess_${index}_${name}`,
         name,
+        taskName: name,
         subjectColor,
         color: sessionColor,
         isStopwatch,
@@ -182,7 +271,7 @@ export const FocusTimeDistribution = ({
     const [y, m, d] = selectedDayStr.split('-').map(Number);
     const prev = new Date(y, m - 1, d - 1);
     setSelectedDayStr(formatDateKey(prev));
-    setClickedSegment(null);
+    setSelectedSegmentId(null);
   };
 
   const handleNextDay = () => {
@@ -191,7 +280,7 @@ export const FocusTimeDistribution = ({
     const [y, m, d] = selectedDayStr.split('-').map(Number);
     const next = new Date(y, m - 1, d + 1);
     setSelectedDayStr(formatDateKey(next));
-    setClickedSegment(null);
+    setSelectedSegmentId(null);
   };
 
   // Navigate Week
@@ -202,7 +291,7 @@ export const FocusTimeDistribution = ({
       d.setDate(d.getDate() - 7);
       return d;
     });
-    setClickedSegment(null);
+    setSelectedSegmentId(null);
   };
 
   const handleNextWeek = () => {
@@ -213,7 +302,7 @@ export const FocusTimeDistribution = ({
       d.setDate(d.getDate() + 7);
       return d;
     });
-    setClickedSegment(null);
+    setSelectedSegmentId(null);
   };
 
   // 1. Filter active sessions for the selected Day / Week
@@ -221,8 +310,9 @@ export const FocusTimeDistribution = ({
     activeSessions,
     totalMinutes,
     activeCount,
-    distributionSegments,
-    activityCards,
+    donutSegments,
+    activitySummaries,
+    dailyAverageForWeek,
   } = useMemo(() => {
     let filtered = [];
 
@@ -237,13 +327,9 @@ export const FocusTimeDistribution = ({
 
     const totalM = filtered.reduce((acc, s) => acc + s.minutes, 0);
 
-    // Grouping & Ordering for Distribution Bar:
-    // To ensure:
-    // 1. Keep existing subject colors for normal Deep Focus sessions.
-    // 2. For each activity, its stopwatch time appears as separate adjacent segments:
-    //    Light Brown -> Dark Brown -> Light Brown.
-    // 3. Each segment's width is proportional to its recorded duration.
-    // We group by activity and sequence Deep Focus sessions first, then Stopwatch sessions in order.
+    // Grouping & Ordering for Segments:
+    // 1. Deep Focus sessions grouped by subject (preserve subject colors: English=lime, DSA=amber, Cloud=fuchsia, Backend=blue, etc.)
+    // 2. Stopwatch sessions retain alternating brown shades (1st: Light Brown #C48255, 2nd: Dark Brown #5D3318, etc.)
     const activityGroups = {};
     const activityOrder = [];
 
@@ -268,90 +354,109 @@ export const FocusTimeDistribution = ({
       }
     });
 
-    // Build ordered segments for distribution bar
-    const barSegments = [];
+    // Build raw segments list
+    const rawSegments = [];
+
     activityOrder.forEach((actName) => {
       const group = activityGroups[actName];
 
-      // 1. Normal Deep Focus sessions (preserve subject color)
-      group.deepFocusSessions.forEach((s, idx) => {
-        barSegments.push({
-          id: s.id || `seg_df_${actName}_${idx}`,
-          session: s,
-          activityName: s.name,
+      // A. Deep Focus segment for this subject (combines its deep focus sessions)
+      if (group.deepFocusSessions.length > 0) {
+        const dfTotalMins = group.deepFocusSessions.reduce((acc, s) => acc + s.minutes, 0);
+        rawSegments.push({
+          id: `seg_df_${actName}`,
+          name: actName,
+          activityName: actName,
           isStopwatch: false,
-          color: s.subjectColor || group.subjectColor,
-          minutes: s.minutes,
-          widthPercent: totalM > 0 ? (s.minutes / totalM) * 100 : 0,
-          sessionNumber: idx + 1,
-          dateStr: s.dateStr,
-          activityDescription: s.activityDescription || 'Deep Focus Study Session',
+          color: group.subjectColor,
+          totalMinutes: dfTotalMins,
+          minutes: dfTotalMins,
+          sessions: group.deepFocusSessions,
+          sessionCount: group.deepFocusSessions.length,
         });
-      });
+      }
 
-      // 2. Stopwatch sessions (separate adjacent segments: Light Brown -> Dark Brown -> Light Brown)
+      // B. Stopwatch sessions: each session has its individual segment with alternating brown color
       group.stopwatchSessions.forEach((s) => {
         const swColor = s.sessionNumber % 2 === 1 ? LIGHT_BROWN : DARK_BROWN;
-        barSegments.push({
-          id: s.id || `seg_sw_${actName}_${s.sessionNumber}`,
-          session: s,
-          activityName: s.name,
+        rawSegments.push({
+          id: `seg_sw_${actName}_${s.sessionNumber}_${s.id}`,
+          name: s.name,
+          activityName: s.activityDescription || s.name,
           isStopwatch: true,
           color: swColor,
+          totalMinutes: s.minutes,
           minutes: s.minutes,
-          widthPercent: totalM > 0 ? (s.minutes / totalM) * 100 : 0,
           sessionNumber: s.sessionNumber,
-          dateStr: s.dateStr,
-          activityDescription: s.activityDescription || s.name,
+          sessions: [s],
+          sessionCount: 1,
         });
       });
     });
 
-    // Build Activity Cards (Section 6: Activity Statistics)
-    const cards = Object.values(activityGroups).map((group) => {
-      const pct = totalM > 0 ? Math.round((group.totalMinutes / totalM) * 100) : 0;
-      const count = group.allSessions.length;
-      const avgMinutes = count > 0 ? Math.round(group.totalMinutes / count) : 0;
+    // Compute geometry for SVG arcs (center cx=160, cy=160, radius=105, strokeWidth=24)
+    const segmentsWithGeometry = [];
+    const count = rawSegments.length;
 
-      const dfMins = group.deepFocusSessions.reduce((acc, s) => acc + s.minutes, 0);
-      const swMins = group.stopwatchSessions.reduce((acc, s) => acc + s.minutes, 0);
-      const swCount = group.stopwatchSessions.length;
-      const dfCount = group.deepFocusSessions.length;
+    if (count === 1 && totalM > 0) {
+      const seg = rawSegments[0];
+      segmentsWithGeometry.push({
+        ...seg,
+        percentage: 100,
+        isSingle: true,
+        startAngle: 0,
+        endAngle: 360,
+      });
+    } else if (count > 1 && totalM > 0) {
+      // Gap in degrees between segments for visual separation
+      const visualGapDeg = Math.min(3.5, 360 / (count * 3));
+      const totalGaps = count * visualGapDeg;
+      const availableDeg = 360 - totalGaps;
 
-      // Historical statistics for this activity across ALL sessions in database
-      const allHistoryForAct = normalizedSessions.filter((s) => s.name === group.name);
-      const historyTotalMins = allHistoryForAct.reduce((acc, s) => acc + s.minutes, 0);
-      const historyCount = allHistoryForAct.length;
-      const historyAvg = historyCount > 0 ? Math.round(historyTotalMins / historyCount) : 0;
-      const latestSession = allHistoryForAct[allHistoryForAct.length - 1];
+      // Allocate proportional degree span for each segment with a minimum for visibility
+      const rawSpans = rawSegments.map((seg) => (seg.minutes / totalM) * availableDeg);
+      const minSpan = Math.max(2.5, 360 / (count * 12));
+      const adjustedSpans = rawSpans.map((sp) => Math.max(minSpan, sp));
+      const adjustedTotal = adjustedSpans.reduce((a, b) => a + b, 0);
+      const normalizedSpans = adjustedSpans.map((sp) => (sp / adjustedTotal) * availableDeg);
 
-      return {
-        name: group.name,
-        subjectColor: group.subjectColor,
-        totalMinutes: group.totalMinutes,
-        percentage: pct,
-        totalSessions: count,
-        averageDurationMinutes: avgMinutes,
-        deepFocusMinutes: dfMins,
-        deepFocusSessionsCount: dfCount,
-        stopwatchMinutes: swMins,
-        stopwatchSessionsCount: swCount,
-        deepFocusSessions: group.deepFocusSessions,
-        stopwatchSessions: group.stopwatchSessions,
-        // All-time stats
-        historyTotalMinutes: historyTotalMins,
-        historyTotalSessions: historyCount,
-        historyAverageMinutes: historyAvg,
-        lastActivityDateStr: latestSession?.dateStr || null,
-      };
-    }).sort((a, b) => b.totalMinutes - a.totalMinutes);
+      let currentAngle = -90; // Start at 12 o'clock
+
+      rawSegments.forEach((seg, idx) => {
+        const span = normalizedSpans[idx];
+        const startAngle = currentAngle;
+        const endAngle = currentAngle + span;
+        currentAngle = endAngle + visualGapDeg;
+
+        segmentsWithGeometry.push({
+          ...seg,
+          percentage: Math.round((seg.minutes / totalM) * 100),
+          isSingle: false,
+          startAngle,
+          endAngle,
+        });
+      });
+    }
+
+    // Activity summaries for overview chips
+    const summaries = Object.values(activityGroups).map((g) => ({
+      name: g.name,
+      color: g.subjectColor,
+      totalMinutes: g.totalMinutes,
+      sessionsCount: g.allSessions.length,
+      percentage: totalM > 0 ? Math.round((g.totalMinutes / totalM) * 100) : 0,
+    })).sort((a, b) => b.totalMinutes - a.totalMinutes);
+
+    // Daily average focus time over the selected week (Total / 7 calendar days)
+    const dailyAvgWeek = Math.round(totalM / 7);
 
     return {
       activeSessions: filtered,
       totalMinutes: totalM,
       activeCount: filtered.length,
-      distributionSegments: barSegments,
-      activityCards: cards,
+      donutSegments: segmentsWithGeometry,
+      activitySummaries: summaries,
+      dailyAverageForWeek: dailyAvgWeek,
     };
   }, [mode, normalizedSessions, selectedDayStr, currentWeekRange]);
 
@@ -391,8 +496,28 @@ export const FocusTimeDistribution = ({
     return `${monLabel} – ${sunLabel}`;
   }, [currentWeekRange]);
 
+  // Currently selected segment object
+  const selectedSegment = useMemo(() => {
+    if (!selectedSegmentId) return null;
+    return donutSegments.find((s) => s.id === selectedSegmentId) || null;
+  }, [selectedSegmentId, donutSegments]);
+
+  // Close detail panel when clicking outside the component
+  useEffect(() => {
+    const handleDocumentClick = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        setSelectedSegmentId(null);
+      }
+    };
+    document.addEventListener('mousedown', handleDocumentClick);
+    return () => document.removeEventListener('mousedown', handleDocumentClick);
+  }, []);
+
   return (
-    <div className="bg-white dark:bg-[#121A17] rounded-3xl border border-emerald-950/10 dark:border-white/10 p-6 sm:p-7 shadow-xs space-y-6 text-[#0D1F17] dark:text-white transition">
+    <div
+      ref={containerRef}
+      className="bg-white dark:bg-[#121A17] rounded-3xl border border-emerald-950/10 dark:border-white/10 p-6 sm:p-7 shadow-xs space-y-6 text-[#0D1F17] dark:text-white transition"
+    >
       {/* Header & Controls */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-emerald-950/5 dark:border-white/5">
         <div>
@@ -401,11 +526,11 @@ export const FocusTimeDistribution = ({
               <Layers className="w-4 h-4" />
             </div>
             <h3 className="text-base font-black tracking-tight text-[#0D1F17] dark:text-white">
-              Focus Time by tasks Tag
+              Focus Time by Tasks Tag
             </h3>
           </div>
           <p className="text-xs text-stone-500 dark:text-stone-400 font-medium mt-0.5">
-            Distribution across Deep Focus and Stopwatch activities.
+            Interactive circular distribution across Deep Focus and Stopwatch activities.
           </p>
         </div>
 
@@ -417,7 +542,7 @@ export const FocusTimeDistribution = ({
               onClick={() => {
                 sounds.playClick();
                 setMode('day');
-                setClickedSegment(null);
+                setSelectedSegmentId(null);
               }}
               className={`px-3 py-1 rounded-xl text-xs font-bold transition cursor-pointer ${
                 mode === 'day'
@@ -431,7 +556,7 @@ export const FocusTimeDistribution = ({
               onClick={() => {
                 sounds.playClick();
                 setMode('week');
-                setClickedSegment(null);
+                setSelectedSegmentId(null);
               }}
               className={`px-3 py-1 rounded-xl text-xs font-bold transition cursor-pointer ${
                 mode === 'week'
@@ -473,20 +598,32 @@ export const FocusTimeDistribution = ({
         </div>
       </div>
 
-      {/* Total for Selected Period with Legend Indicators */}
+      {/* Total Focus & Daily Average Statistics Row */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-        <div className="flex items-center space-x-2">
-          <span className="font-extrabold uppercase tracking-wider text-stone-500 dark:text-stone-400 text-[11px]">
-            {mode === 'day' ? `Focus Total (${formattedDayLabel})` : 'Weekly Focus Total'}
-          </span>
-          <div className="flex items-center space-x-1.5 font-mono text-base font-black text-[#0D1F17] dark:text-white">
-            <Clock className="w-3.5 h-3.5 text-[#10B981]" />
-            <span>{formatMinutes(totalMinutes)}</span>
-          </div>
-          {activeCount > 0 && (
-            <span className="text-[11px] text-stone-400 font-medium">
-              ({activeCount} session{activeCount === 1 ? '' : 's'})
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center space-x-2">
+            <span className="font-extrabold uppercase tracking-wider text-stone-500 dark:text-stone-400 text-[11px]">
+              {mode === 'day' ? `Focus Total (${formattedDayLabel})` : 'Weekly Focus Total'}
             </span>
+            <div className="flex items-center space-x-1.5 font-mono text-base font-black text-[#0D1F17] dark:text-white">
+              <Clock className="w-3.5 h-3.5 text-[#10B981]" />
+              <span>{formatMinutes(totalMinutes)}</span>
+            </div>
+          </div>
+
+          {mode === 'week' && (
+            <div className="flex items-center space-x-2 pl-2 sm:border-l border-emerald-950/10 dark:border-white/10">
+              <span className="font-extrabold uppercase tracking-wider text-stone-500 dark:text-stone-400 text-[11px]">
+                Daily Average Focus Time
+              </span>
+              <div className="flex items-center space-x-1.5 font-mono text-base font-black text-[#10B981] dark:text-[#34D399]">
+                <TrendingUp className="w-3.5 h-3.5" />
+                <span>{formatMinutes(dailyAverageForWeek)}/day</span>
+              </div>
+              <span className="text-[10px] text-stone-400 font-medium">
+                (7 days)
+              </span>
+            </div>
           )}
         </div>
 
@@ -507,9 +644,9 @@ export const FocusTimeDistribution = ({
         </div>
       </div>
 
-      {/* Main Content: Stacked Distribution Bar or Empty State */}
-      {distributionSegments.length === 0 ? (
-        <div className="py-12 text-center rounded-3xl bg-stone-50 dark:bg-[#182420]/50 border border-emerald-950/5 dark:border-white/5 p-6 space-y-2">
+      {/* Main Content: Interactive Circular Donut Chart */}
+      {donutSegments.length === 0 ? (
+        <div className="py-14 text-center rounded-3xl bg-stone-50 dark:bg-[#182420]/50 border border-emerald-950/5 dark:border-white/5 p-6 space-y-2">
           <div className="w-12 h-12 rounded-2xl bg-white dark:bg-[#121A17] text-2xl flex items-center justify-center mx-auto shadow-xs">
             ☕
           </div>
@@ -517,227 +654,262 @@ export const FocusTimeDistribution = ({
             No focus sessions recorded for this {mode}.
           </div>
           <p className="text-xs text-stone-400 max-w-sm mx-auto">
-            Both Deep Focus sessions and saved Stopwatch sessions will automatically distribute into this timeline.
+            Both Deep Focus sessions and saved Stopwatch sessions will automatically appear in this circular chart.
           </p>
         </div>
       ) : (
-        <div className="space-y-4">
-          {/* 1. Rounded Stacked Progress Bar (Each session is an individual segment) */}
-          <div className="space-y-2">
-            <div className="relative w-full h-8 sm:h-9 rounded-2xl overflow-hidden flex bg-stone-100 dark:bg-[#182420] shadow-inner p-1 gap-0.5">
-              {distributionSegments.map((seg) => {
-                const isHovered = hoveredSegmentId === seg.id;
-                const isSelected = clickedSegment?.id === seg.id;
-                return (
-                  <div
-                    key={seg.id}
-                    onMouseEnter={() => setHoveredSegmentId(seg.id)}
-                    onMouseLeave={() => setHoveredSegmentId(null)}
-                    onClick={() => {
-                      sounds.playClick();
-                      setClickedSegment((prev) => (prev?.id === seg.id ? null : seg));
-                    }}
-                    style={{
-                      width: `${Math.max(1.8, seg.widthPercent)}%`,
-                      backgroundColor: seg.color,
-                    }}
-                    className={`h-full rounded-md transition-all duration-200 relative group cursor-pointer ${
-                      isSelected
-                        ? 'ring-2 ring-white dark:ring-emerald-400 z-20 scale-y-110 shadow-lg'
-                        : isHovered
-                        ? 'brightness-110 z-10 scale-y-105 shadow-md'
-                        : 'hover:brightness-105'
-                    }`}
-                    title={`${seg.activityName}${seg.isStopwatch ? ` (Session ${seg.sessionNumber})` : ''}: ${formatMinutes(seg.minutes)}`}
-                  >
-                    {/* Inner highlight line */}
-                    <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                  </div>
-                );
-              })}
-            </div>
+        <div className="space-y-6">
+          {/* Donut Chart Presentation Container */}
+          <div className="flex flex-col items-center justify-center pt-2 pb-2">
+            <div className="relative w-64 h-64 sm:w-72 sm:h-72 flex items-center justify-center">
+              <svg
+                viewBox="0 0 320 320"
+                className="w-full h-full transform -rotate-90 select-none overflow-visible"
+              >
+                <defs>
+                  {/* Subtle drop shadow filter for hovered / selected segment */}
+                  <filter id="donutSegmentGlow" x="-20%" y="-20%" width="140%" height="140%">
+                    <feDropShadow dx="0" dy="2" stdDeviation="4" floodOpacity="0.3" />
+                  </filter>
+                </defs>
 
-            {/* Clicked / Hovered Segment Popover (Interactive Distribution Bar) */}
-            {(clickedSegment || hoveredSegmentId) && (
-              <div className="animate-fadeIn">
-                {(() => {
-                  const target = clickedSegment || distributionSegments.find((s) => s.id === hoveredSegmentId);
-                  if (!target) return null;
+                {/* Background Ring Track */}
+                <circle
+                  cx="160"
+                  cy="160"
+                  r="105"
+                  fill="none"
+                  stroke="currentColor"
+                  className="text-stone-100 dark:text-[#182420]"
+                  strokeWidth="24"
+                />
+
+                {/* Donut Segments */}
+                {donutSegments.map((seg) => {
+                  const isSelected = selectedSegmentId === seg.id;
+                  const isHovered = hoveredSegmentId === seg.id;
+                  const strokeW = isSelected ? 32 : isHovered ? 28 : 24;
+
+                  if (seg.isSingle) {
+                    return (
+                      <circle
+                        key={seg.id}
+                        cx="160"
+                        cy="160"
+                        r="105"
+                        fill="none"
+                        stroke={seg.color}
+                        strokeWidth={strokeW}
+                        className="cursor-pointer transition-all duration-300 ease-out"
+                        style={{
+                          filter: isSelected || isHovered ? 'url(#donutSegmentGlow)' : 'none',
+                        }}
+                        onMouseEnter={() => setHoveredSegmentId(seg.id)}
+                        onMouseLeave={() => setHoveredSegmentId(null)}
+                        onClick={() => {
+                          sounds.playClick();
+                          setSelectedSegmentId((prev) => (prev === seg.id ? null : seg.id));
+                        }}
+                      />
+                    );
+                  }
+
+                  const pathData = describeArc(160, 160, 105, seg.startAngle, seg.endAngle);
 
                   return (
-                    <div className="p-4 rounded-2xl bg-stone-50 dark:bg-[#182420] border border-emerald-950/10 dark:border-white/10 shadow-md flex items-start justify-between gap-4">
-                      <div className="space-y-1 min-w-0">
-                        <div className="flex items-center space-x-2">
-                          <span
-                            className="w-3 h-3 rounded-md flex-shrink-0"
-                            style={{ backgroundColor: target.color }}
-                          ></span>
-                          <span className="text-sm font-black text-[#0D1F17] dark:text-white truncate">
-                            {target.activityName}
-                          </span>
-                          <span
-                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                              target.isStopwatch
-                                ? 'bg-[#C48255]/15 dark:bg-[#C48255]/25 text-[#8A4820] dark:text-[#E2A67D] border border-[#C48255]/30'
-                                : 'bg-emerald-500/10 dark:bg-emerald-500/20 text-emerald-800 dark:text-emerald-300'
-                            }`}
-                          >
-                            {target.isStopwatch ? `Session ${target.sessionNumber}` : 'Deep Focus'}
-                          </span>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 pt-1 text-xs">
-                          <div className="flex items-center space-x-1.5 text-stone-600 dark:text-stone-300">
-                            <Clock className="w-3.5 h-3.5 text-[#10B981] flex-shrink-0" />
-                            <span>
-                              <strong>Duration:</strong> {formatMinutes(target.minutes)}
-                            </span>
-                          </div>
-
-                          <div className="flex items-center space-x-1.5 text-stone-600 dark:text-stone-300">
-                            <Calendar className="w-3.5 h-3.5 text-stone-400 flex-shrink-0" />
-                            <span>
-                              <strong>Date:</strong> {formatReadableDate(target.dateStr)}
-                            </span>
-                          </div>
-
-                          <div className="col-span-1 sm:col-span-2 flex items-start space-x-1.5 text-stone-600 dark:text-stone-300 pt-0.5">
-                            <Tag className="w-3.5 h-3.5 text-amber-500 flex-shrink-0 mt-0.5" />
-                            <span className="truncate">
-                              <strong>Activity:</strong> {target.activityDescription || target.activityName}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-
-                      {clickedSegment && (
-                        <button
-                          onClick={() => setClickedSegment(null)}
-                          className="p-1 rounded-lg text-stone-400 hover:text-stone-700 dark:hover:text-stone-200 hover:bg-stone-200/60 dark:hover:bg-white/10 transition cursor-pointer"
-                          title="Dismiss"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      )}
-                    </div>
+                    <path
+                      key={seg.id}
+                      d={pathData}
+                      fill="none"
+                      stroke={seg.color}
+                      strokeWidth={strokeW}
+                      strokeLinecap="round"
+                      className="cursor-pointer transition-all duration-300 ease-out"
+                      style={{
+                        filter: isSelected || isHovered ? 'url(#donutSegmentGlow)' : 'none',
+                        transformOrigin: '160px 160px',
+                      }}
+                      onMouseEnter={() => setHoveredSegmentId(seg.id)}
+                      onMouseLeave={() => setHoveredSegmentId(null)}
+                      onClick={() => {
+                        sounds.playClick();
+                        setSelectedSegmentId((prev) => (prev === seg.id ? null : seg.id));
+                      }}
+                    >
+                      <title>{`${seg.activityName}: ${formatMinutes(seg.totalMinutes)} (${seg.percentage}%)`}</title>
+                    </path>
                   );
-                })()}
+                })}
+              </svg>
+
+              {/* Inside Donut Center: TODAY / THIS WEEK & Total Focus Time */}
+              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-center px-4">
+                <span className="text-[11px] font-black uppercase tracking-widest text-[#576560] dark:text-[#8BA398]">
+                  {mode === 'day' ? 'TODAY' : 'THIS WEEK'}
+                </span>
+                <span className="text-[11px] font-bold text-[#8A9791] mt-0.5">
+                  {mode === 'day' ? 'Total Focus Time' : 'Total Weekly Focus Time'}
+                </span>
+                <span className="text-2xl sm:text-3xl font-black font-mono tracking-tight text-[#1C2A24] dark:text-[#F2F7F4] mt-1">
+                  {formatDonutCenterTime(totalMinutes)}
+                </span>
               </div>
-            )}
+            </div>
           </div>
 
-          {/* 2. Individual Task Cards with Dedicated Stopwatch Indicators & Statistics */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-            {activityCards.map((card) => {
-              const isHovered =
-                hoveredSegmentId &&
-                distributionSegments.find((s) => s.id === hoveredSegmentId)?.activityName === card.name;
-
-              return (
-                <div
-                  key={card.name}
-                  className={`p-4 rounded-2xl border transition-all space-y-3 ${
-                    isHovered
-                      ? 'bg-[#E8F7F0]/60 dark:bg-[#182420] border-[#10B981] shadow-sm'
-                      : 'bg-stone-50/70 dark:bg-[#182420]/50 border-emerald-950/5 dark:border-white/5 hover:bg-white dark:hover:bg-[#182420]'
-                  }`}
-                >
-                  {/* Top: Name, Subject Color, Total Time & Percentage */}
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center space-x-2.5 min-w-0">
-                      <span
-                        className="w-3.5 h-3.5 rounded-md flex-shrink-0 shadow-xs"
-                        style={{ backgroundColor: card.subjectColor }}
-                      ></span>
-                      <span className="text-xs font-black text-[#0D1F17] dark:text-white truncate">
-                        {card.name}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center space-x-2 text-xs font-mono font-black flex-shrink-0">
-                      <span className="text-[#0D1F17] dark:text-white">
-                        {formatMinutes(card.totalMinutes)}
-                      </span>
-                      <span className="text-[11px] text-stone-400 min-w-[32px] text-right font-bold">
-                        {card.percentage}%
-                      </span>
-                    </div>
+          {/* 3. CLICKABLE SEGMENT DETAIL PANEL: Information ONLY about the selected segment */}
+          {selectedSegment ? (
+            <div className="p-5 sm:p-6 rounded-3xl bg-stone-50 dark:bg-[#162420] border-2 border-[#10B981] shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-200 space-y-4">
+              {/* Header with Activity, Duration, Sessions count, and Close Button */}
+              <div className="flex items-start justify-between gap-3 pb-3 border-b border-emerald-950/10 dark:border-white/10">
+                <div className="space-y-1">
+                  <div className="flex items-center space-x-2.5">
+                    <span
+                      className="w-3.5 h-3.5 rounded-full flex-shrink-0 shadow-xs"
+                      style={{ backgroundColor: selectedSegment.color }}
+                    />
+                    <h4 className="text-base sm:text-lg font-black text-[#0D1F17] dark:text-white">
+                      Activity: {selectedSegment.name}
+                    </h4>
+                    <span
+                      className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                        selectedSegment.isStopwatch
+                          ? 'bg-[#C48255]/20 text-[#8A4820] dark:text-[#E2A67D] border border-[#C48255]/30'
+                          : 'bg-emerald-500/15 text-emerald-800 dark:text-emerald-300'
+                      }`}
+                    >
+                      {selectedSegment.isStopwatch
+                        ? `Stopwatch ${selectedSegment.sessionNumber ? `(Session ${selectedSegment.sessionNumber})` : ''}`
+                        : 'Deep Focus'}
+                    </span>
                   </div>
 
-                  {/* Mini Segmented Distribution Bar (Deep Focus in subject color, Stopwatch in alternating browns) */}
-                  <div className="w-full h-2 rounded-full overflow-hidden flex bg-stone-200/80 dark:bg-stone-800 gap-0.5 p-0.5">
-                    {/* Deep Focus portion */}
-                    {card.deepFocusMinutes > 0 && (
-                      <div
-                        style={{
-                          width: `${(card.deepFocusMinutes / card.totalMinutes) * 100}%`,
-                          backgroundColor: card.subjectColor,
-                        }}
-                        className="h-full rounded-sm"
-                        title={`Deep Focus: ${formatMinutes(card.deepFocusMinutes)}`}
-                      ></div>
-                    )}
-                    {/* Individual Stopwatch sessions portion */}
-                    {card.stopwatchSessions.map((swSess, idx) => {
-                      const color = swSess.sessionNumber % 2 === 1 ? LIGHT_BROWN : DARK_BROWN;
-                      return (
-                        <div
-                          key={swSess.id || idx}
-                          style={{
-                            width: `${(swSess.minutes / card.totalMinutes) * 100}%`,
-                            backgroundColor: color,
-                          }}
-                          className="h-full rounded-sm"
-                          title={`Stopwatch Session ${swSess.sessionNumber}: ${formatMinutes(swSess.minutes)}`}
-                        ></div>
-                      );
-                    })}
-                  </div>
-
-                  {/* Statistics Details Grid */}
-                  <div className="grid grid-cols-2 gap-2 text-[11px] text-stone-500 dark:text-stone-400 pt-0.5">
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-stone-600 dark:text-stone-300 pt-1">
                     <div>
-                      <span className="font-semibold">Sessions: </span>
-                      <strong className="text-[#0D1F17] dark:text-white font-mono">
-                        {card.totalSessions}
-                      </strong>
+                      <strong>Total Focus Time: </strong>
+                      <span className="font-mono font-bold text-[#0D1F17] dark:text-white">
+                        {formatDetailedDuration(selectedSegment.totalMinutes)}
+                      </span>
                     </div>
                     <div>
-                      <span className="font-semibold">Avg Session: </span>
-                      <strong className="text-[#0D1F17] dark:text-white font-mono">
-                        {formatMinutes(card.averageDurationMinutes)}
-                      </strong>
+                      <strong>Sessions: </strong>
+                      <span className="font-mono font-bold text-[#0D1F17] dark:text-white">
+                        {selectedSegment.sessions.length}
+                      </span>
                     </div>
-                  </div>
-
-                  {/* Dedicated Stopwatch & Deep Focus Badge Breakdown */}
-                  <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-emerald-950/5 dark:border-white/5">
-                    {card.deepFocusMinutes > 0 && (
-                      <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full bg-emerald-500/10 dark:bg-emerald-500/20 text-[10px] font-black text-emerald-800 dark:text-emerald-300">
-                        <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: card.subjectColor }}></span>
-                        <span>Deep Focus: {formatMinutes(card.deepFocusMinutes)}</span>
-                      </span>
-                    )}
-
-                    {card.stopwatchMinutes > 0 && (
-                      <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full bg-[#C48255]/15 dark:bg-[#C48255]/25 border border-[#C48255]/30 text-[10px] font-black text-[#8A4820] dark:text-[#E2A67D]">
-                        <span className="w-1.5 h-1.5 rounded-full bg-[#C48255]"></span>
-                        <span>
-                          Stopwatch: {formatMinutes(card.stopwatchMinutes)} ({card.stopwatchSessionsCount} sess)
-                        </span>
-                      </span>
-                    )}
-
-                    {card.lastActivityDateStr && (
-                      <span className="text-[10px] text-stone-400 font-medium ml-auto">
-                        Last: {card.lastActivityDateStr === todayKey ? 'Today' : card.lastActivityDateStr}
-                      </span>
-                    )}
                   </div>
                 </div>
-              );
-            })}
-          </div>
+
+                <button
+                  onClick={() => setSelectedSegmentId(null)}
+                  className="p-1.5 rounded-xl text-stone-400 hover:text-stone-700 dark:hover:text-stone-200 hover:bg-stone-200/60 dark:hover:bg-white/10 transition cursor-pointer"
+                  title="Close details"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Individual Session Breakdown */}
+              <div className="space-y-3">
+                <div className="text-xs font-black uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                  Session Details
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {selectedSegment.sessions.map((sess, idx) => (
+                    <div
+                      key={sess.id || idx}
+                      className="p-4 rounded-2xl bg-white dark:bg-[#121A17] border border-emerald-950/10 dark:border-white/10 space-y-2 shadow-xs"
+                    >
+                      <div className="flex items-center justify-between pb-1.5 border-b border-emerald-950/5 dark:border-white/5">
+                        <span className="text-xs font-black text-[#0D1F17] dark:text-white">
+                          Session {idx + 1}: {formatDetailedDuration(sess.minutes)}
+                        </span>
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            sess.isStopwatch
+                              ? 'bg-[#C48255]/15 text-[#8A4820] dark:text-[#E2A67D]'
+                              : 'bg-emerald-500/10 text-emerald-800 dark:text-emerald-300'
+                          }`}
+                        >
+                          {sess.isStopwatch ? 'Stopwatch' : 'Deep Focus'}
+                        </span>
+                      </div>
+
+                      <div className="space-y-1 text-xs text-stone-600 dark:text-stone-300">
+                        <div>
+                          <strong>Activity: </strong>
+                          <span>{sess.activityDescription || sess.taskName || sess.name}</span>
+                        </div>
+                        <div>
+                          <strong>Date: </strong>
+                          <span>{formatReadableDate(sess.dateStr)}</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 pt-0.5">
+                          <div>
+                            <strong>Started: </strong>
+                            <span>{formatSessionTime(sess.startTime)}</span>
+                          </div>
+                          <div>
+                            <strong>Ended: </strong>
+                            <span>{formatSessionTime(sess.endTime)}</span>
+                          </div>
+                        </div>
+                        <div>
+                          <strong>Actual duration: </strong>
+                          <span className="font-mono font-bold text-[#0D1F17] dark:text-white">
+                            {formatDetailedDuration(sess.minutes)}
+                          </span>
+                        </div>
+                        <div>
+                          <strong>Session Type: </strong>
+                          <span>{sess.isStopwatch ? 'Stopwatch' : 'Deep Focus'}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : (
+            /* Prompt to click segment and quick activity overview */
+            <div className="space-y-3">
+              <div className="text-center text-xs text-stone-500 dark:text-stone-400 font-medium py-1">
+                👆 Click any segment on the donut chart to view its individual session timestamps and records.
+              </div>
+
+              {/* Activity Chips Overview */}
+              <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                {activitySummaries.map((act) => (
+                  <button
+                    key={act.name}
+                    onClick={() => {
+                      sounds.playClick();
+                      const targetSeg = donutSegments.find((s) => s.name === act.name);
+                      if (targetSeg) {
+                        setSelectedSegmentId(targetSeg.id);
+                      }
+                    }}
+                    className="inline-flex items-center space-x-2 px-3 py-1.5 rounded-full bg-stone-100 hover:bg-stone-200/80 dark:bg-[#182420] dark:hover:bg-[#22352f] border border-stone-200/60 dark:border-white/10 transition cursor-pointer text-xs"
+                  >
+                    <span
+                      className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: act.color }}
+                    />
+                    <span className="font-bold text-[#0D1F17] dark:text-white truncate max-w-[120px]">
+                      {act.name}
+                    </span>
+                    <span className="font-mono text-stone-500 dark:text-stone-400">
+                      {formatMinutes(act.totalMinutes)}
+                    </span>
+                    <span className="text-[10px] text-stone-400 font-bold">
+                      ({act.percentage}%)
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

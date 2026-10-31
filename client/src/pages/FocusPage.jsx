@@ -16,10 +16,12 @@ import {
   Bell,
   BellOff,
   RotateCcw,
-  AlertCircle
+  AlertCircle,
+  X,
 } from 'lucide-react';
 import { PetDisplay2D } from '../components/Sparky3DScene.jsx';
 import { StopwatchSaveModal } from '../components/StopwatchSaveModal.jsx';
+import { FocusActionConfirmModal } from '../components/FocusActionConfirmModal.jsx';
 import { getSubjectColor } from '../utils/subjectColors.js';
 import { getStudyDayKey, getStudyDayDate, formatResetTimeDisplay } from '../utils/dateUtils.js';
 import { sounds } from '../audio/soundEffects.js';
@@ -192,6 +194,18 @@ export const FocusPage = ({
   const [showCountdownModal, setShowCountdownModal] = useState(false);
   const [countdownAction, setCountdownAction] = useState('start'); // 'start' | 'resume'
   const [countdownValue, setCountdownValue] = useState(5);
+
+  // Confirmation Modal State for Interruptive Actions (Stop, Reset, Switch Subject, Switch Mode)
+  const [confirmModalState, setConfirmModalState] = useState({
+    isOpen: false,
+    title: '',
+    subtitle: '',
+    confirmText: 'Confirm',
+    cancelText: 'Cancel',
+    isDestructive: true,
+    icon: Square,
+    onConfirm: () => {},
+  });
 
   // Push Notification state
   const [pushStatus, setPushStatus] = useState({
@@ -637,10 +651,8 @@ export const FocusPage = ({
     }
   }, [activeTask, timerMode, isRunning, isPaused, selectedSubject]);
 
-  // Mode Switcher
-  const handleModeChange = (mode) => {
-    // If pomodoro is running and switching between focus and breaks, keep it guarded
-    if (isRunning && (mode === 'shortBreak' || mode === 'longBreak')) return;
+  // Internal Mode Change Executor
+  const executeModeChange = (mode) => {
     sounds.playClick();
     setTimerMode(mode);
     if (mode === 'stopwatch') {
@@ -678,6 +690,38 @@ export const FocusPage = ({
     setTotalSeconds(mins * 60);
     setPauseCount(0);
     setIsPaused(false);
+  };
+
+  // Guarded Mode Switcher (Safeguard when active session is running)
+  const handleModeChange = (mode) => {
+    if (mode === timerMode) return;
+    // If pomodoro is running and switching between focus and breaks, let existing break warning handle it
+    if (isRunning && (mode === 'shortBreak' || mode === 'longBreak')) {
+      handleBreakButtonClick();
+      return;
+    }
+    if (isRunning || stopwatchIsRunning) {
+      setConfirmModalState({
+        isOpen: true,
+        title: 'Switch Timer Mode?',
+        subtitle: `You have an active ${timerMode === 'stopwatch' ? 'stopwatch' : 'focus'} timer running. Switching modes will end your current session and save recorded progress. Are you sure you want to switch?`,
+        confirmText: 'Switch Mode',
+        cancelText: 'Stay Here',
+        isDestructive: true,
+        icon: Clock,
+        onConfirm: () => {
+          setConfirmModalState((prev) => ({ ...prev, isOpen: false }));
+          if (timerMode === 'stopwatch') {
+            handleStopStopwatch();
+          } else {
+            handleReset();
+          }
+          executeModeChange(mode);
+        },
+      });
+      return;
+    }
+    executeModeChange(mode);
   };
 
   // Load and restore stopwatch from localStorage
@@ -903,6 +947,54 @@ export const FocusPage = ({
     setStopwatchIsRunning(false);
     setStopwatchIsPaused(false);
     saveStopwatchState(false, false, 0, null);
+  };
+
+  // Guarded Stopwatch Stop Click Handler (Safeguard)
+  const handleStopStopwatchClick = () => {
+    sounds.playClick?.();
+    const totalAcc = (stopwatchBaseAccumulatedRef.current || 0) +
+      (stopwatchSegmentStartRef.current ? Math.max(0, Math.floor((Date.now() - stopwatchSegmentStartRef.current) / 1000)) : 0);
+    if (stopwatchIsRunning || totalAcc > 0) {
+      setConfirmModalState({
+        isOpen: true,
+        title: 'Are you sure you want to stop this focus session?',
+        subtitle: 'Stopping will finalize and record the focus time you have tracked with the stopwatch so far.',
+        confirmText: 'Confirm Stop',
+        cancelText: 'Cancel',
+        isDestructive: true,
+        icon: Square,
+        onConfirm: () => {
+          setConfirmModalState((prev) => ({ ...prev, isOpen: false }));
+          handleStopStopwatch();
+        },
+      });
+    } else {
+      handleStopStopwatch();
+    }
+  };
+
+  // Guarded Stopwatch Reset Click Handler (Safeguard)
+  const handleResetStopwatchClick = () => {
+    sounds.playClick?.();
+    const totalAcc = (stopwatchBaseAccumulatedRef.current || 0) +
+      (stopwatchSegmentStartRef.current ? Math.max(0, Math.floor((Date.now() - stopwatchSegmentStartRef.current) / 1000)) : 0);
+    if (stopwatchIsRunning || totalAcc > 0) {
+      setConfirmModalState({
+        isOpen: true,
+        title: 'Reset Stopwatch?',
+        subtitle: 'Are you sure you want to reset the stopwatch to 00:00:00? Unsaved elapsed time will be cleared.',
+        confirmText: 'Reset',
+        cancelText: 'Cancel',
+        isDestructive: true,
+        icon: RotateCcw,
+        onConfirm: () => {
+          setConfirmModalState((prev) => ({ ...prev, isOpen: false }));
+          handleResetStopwatch();
+        },
+      });
+    } else {
+      handleResetStopwatch();
+    }
   };
 
   // Keep pet state in sync with stopwatch
@@ -1332,22 +1424,84 @@ export const FocusPage = ({
     }
   }, [timeLeft, isRunning, isPaused]);
 
-  // Select Subject from Timetable or Custom
-  const handleSelectSubject = (subject) => {
-    sounds.playClick();
+  // Subject Selection Appliers
+  const applySubjectSelection = (subject) => {
     setSelectedSubject(subject);
     setSelectedColor(subject.color || '#3B82F6');
     setShowSubjectMenu(false);
     restoreSubjectProgress(subject);
   };
 
-  const handleSelectTaskFallback = (task) => {
-    sounds.playClick();
+  const applyTaskFallbackSelection = (task) => {
     setSelectedSubject(null);
     if (onSelectTask) onSelectTask(task);
     setSelectedColor(task.colorTag || '#3B82F6');
     setShowSubjectMenu(false);
     restoreSubjectProgress(task);
+  };
+
+  // Guarded Select Subject from Timetable or Custom
+  const handleSelectSubject = (subject) => {
+    sounds.playClick();
+    if (isRunning || stopwatchIsRunning) {
+      setConfirmModalState({
+        isOpen: true,
+        title: 'Switch Subject?',
+        subtitle: `You have an active focus session in progress for "${activeSubjectName}". Switching subjects will end your current session and save the completed focus time. Are you sure you want to switch?`,
+        confirmText: 'Switch Subject',
+        cancelText: 'Keep Focusing',
+        isDestructive: true,
+        icon: BookOpen,
+        onConfirm: () => {
+          setConfirmModalState((prev) => ({ ...prev, isOpen: false }));
+          if (timerMode === 'stopwatch') {
+            handleStopStopwatch();
+          } else {
+            handleReset();
+          }
+          applySubjectSelection(subject);
+        },
+      });
+      return;
+    }
+    applySubjectSelection(subject);
+  };
+
+  const handleSelectTaskFallback = (task) => {
+    sounds.playClick();
+    if (isRunning || stopwatchIsRunning) {
+      setConfirmModalState({
+        isOpen: true,
+        title: 'Switch Subject?',
+        subtitle: `You have an active focus session in progress for "${activeSubjectName}". Switching subjects will end your current session and save the completed focus time. Are you sure you want to switch?`,
+        confirmText: 'Switch Subject',
+        cancelText: 'Keep Focusing',
+        isDestructive: true,
+        icon: BookOpen,
+        onConfirm: () => {
+          setConfirmModalState((prev) => ({ ...prev, isOpen: false }));
+          if (timerMode === 'stopwatch') {
+            handleStopStopwatch();
+          } else {
+            handleReset();
+          }
+          applyTaskFallbackSelection(task);
+        },
+      });
+      return;
+    }
+    applyTaskFallbackSelection(task);
+  };
+
+  // Cancel 5-second countdown immediately and return to ready state
+  const handleCancelCountdown = () => {
+    sounds.playClick?.();
+    if (countdownTimerRef.current) {
+      clearInterval(countdownTimerRef.current);
+      countdownTimerRef.current = null;
+    }
+    setShowCountdownModal(false);
+    setCountdownValue(5);
   };
 
   // 1. Initiate 5-second countdown before Start OR Resume
@@ -1689,6 +1843,28 @@ export const FocusPage = ({
     setCompletionError(null);
     clearTimerStorage();
     broadcastTimerEvent('TIMER_RESET', {});
+  };
+
+  // Guarded Pomodoro Stop Click Handler (Safeguard)
+  const handleStopPomodoroClick = () => {
+    sounds.playClick();
+    if (isRunning || isPaused || (sessionIdRef.current || sessionId)) {
+      setConfirmModalState({
+        isOpen: true,
+        title: 'Are you sure you want to stop this focus session?',
+        subtitle: 'Stopping early will finalize the focus time you have actually completed so far. Unused planned time will not be counted.',
+        confirmText: 'Confirm Stop',
+        cancelText: 'Cancel',
+        isDestructive: true,
+        icon: Square,
+        onConfirm: () => {
+          setConfirmModalState((prev) => ({ ...prev, isOpen: false }));
+          handleReset();
+        },
+      });
+    } else {
+      handleReset();
+    }
   };
 
   // Explicit Stop Alarm action
@@ -2432,7 +2608,7 @@ export const FocusPage = ({
                       <span>Pause</span>
                     </button>
                     <button
-                      onClick={handleStopStopwatch}
+                      onClick={handleStopStopwatchClick}
                       className="flex items-center space-x-2 bg-rose-600 hover:bg-rose-700 text-white px-7 sm:px-8 py-3.5 rounded-full font-black text-sm tracking-wide shadow-md hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer"
                       title="Stop and record session"
                     >
@@ -2440,7 +2616,7 @@ export const FocusPage = ({
                       <span>STOP</span>
                     </button>
                     <button
-                      onClick={handleResetStopwatch}
+                      onClick={handleResetStopwatchClick}
                       className="w-12 h-12 rounded-full flex items-center justify-center bg-stone-100 hover:bg-stone-200 dark:bg-[#182420] dark:hover:bg-[#20302A] text-stone-500 dark:text-stone-400 border border-stone-200/60 dark:border-white/10 transition-all hover:scale-105 active:scale-95 shadow-xs cursor-pointer"
                       title="Reset Stopwatch"
                     >
@@ -2457,7 +2633,7 @@ export const FocusPage = ({
                       <span>Resume</span>
                     </button>
                     <button
-                      onClick={handleStopStopwatch}
+                      onClick={handleStopStopwatchClick}
                       className="flex items-center space-x-2 bg-rose-600 hover:bg-rose-700 text-white px-7 sm:px-8 py-3.5 rounded-full font-black text-sm tracking-wide shadow-md hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer"
                       title="Stop and record session"
                     >
@@ -2465,7 +2641,7 @@ export const FocusPage = ({
                       <span>STOP</span>
                     </button>
                     <button
-                      onClick={handleResetStopwatch}
+                      onClick={handleResetStopwatchClick}
                       className="w-12 h-12 rounded-full flex items-center justify-center bg-stone-100 hover:bg-stone-200 dark:bg-[#182420] dark:hover:bg-[#20302A] text-stone-500 dark:text-stone-400 border border-stone-200/60 dark:border-white/10 transition-all hover:scale-105 active:scale-95 shadow-xs cursor-pointer"
                       title="Reset Stopwatch"
                     >
@@ -2687,9 +2863,9 @@ export const FocusPage = ({
                       <span>Resume Focus</span>
                     </button>
                     <button
-                      onClick={handleReset}
+                      onClick={handleStopPomodoroClick}
                       className="w-12 h-12 rounded-full flex items-center justify-center bg-stone-100 hover:bg-stone-200 dark:bg-[#182420] dark:hover:bg-[#20302A] text-stone-500 dark:text-stone-400 border border-stone-200/60 dark:border-white/10 transition-all hover:scale-105 active:scale-95 shadow-xs cursor-pointer"
-                      title="Cancel Focus Session"
+                      title="Stop Focus Session"
                     >
                       <Square className="w-4 h-4 text-rose-500 fill-rose-500" />
                     </button>
@@ -2710,9 +2886,9 @@ export const FocusPage = ({
                     </button>
 
                     <button
-                      onClick={handleReset}
+                      onClick={handleStopPomodoroClick}
                       className="w-12 h-12 rounded-full flex items-center justify-center bg-stone-100 hover:bg-stone-200 dark:bg-[#182420] dark:hover:bg-[#20302A] text-stone-500 dark:text-stone-400 border border-stone-200/60 dark:border-white/10 transition-all hover:scale-105 active:scale-95 shadow-xs cursor-pointer"
-                      title="Cancel Focus Session"
+                      title="Stop Focus Session"
                     >
                       <Square className="w-4 h-4 text-rose-500 fill-rose-500" />
                     </button>
@@ -2825,6 +3001,18 @@ export const FocusPage = ({
                 {countdownAction === 'resume' ? 'Resuming in' : 'Starting in'} {countdownValue} seconds...
               </p>
             </div>
+
+            {/* Cancel Countdown Button */}
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={handleCancelCountdown}
+                className="w-full py-3 px-6 rounded-full font-black text-xs tracking-wider uppercase border border-stone-300 dark:border-white/10 hover:bg-stone-100 dark:hover:bg-[#1C2E29] text-stone-600 dark:text-stone-300 transition cursor-pointer flex items-center justify-center space-x-2"
+              >
+                <X className="w-4 h-4" />
+                <span>Cancel</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -2837,6 +3025,19 @@ export const FocusPage = ({
         onSave={handleSaveStopwatchSession}
         onDiscard={handleDiscardStopwatch}
         onClose={() => setShowStopwatchModal(false)}
+      />
+
+      {/* INTERRUPTIVE ACTION SAFEGUARD CONFIRMATION MODAL */}
+      <FocusActionConfirmModal
+        isOpen={confirmModalState.isOpen}
+        title={confirmModalState.title}
+        subtitle={confirmModalState.subtitle}
+        confirmText={confirmModalState.confirmText}
+        cancelText={confirmModalState.cancelText}
+        isDestructive={confirmModalState.isDestructive}
+        icon={confirmModalState.icon}
+        onConfirm={confirmModalState.onConfirm}
+        onCancel={() => setConfirmModalState((prev) => ({ ...prev, isOpen: false }))}
       />
     </div>
   );

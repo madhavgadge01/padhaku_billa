@@ -69,10 +69,24 @@ export const ProgressPage = ({ user, onReload }) => {
     );
   }
 
-  // Calculate actual daily average in minutes
-  const totalMins = summary?.totalMinutesLogged || 0;
-  const activeDays = summary?.uniqueDaysLogged || (totalMins > 0 ? 1 : 0);
-  const dailyAvgMinutes = summary?.averageDailyMinutes || (activeDays > 0 ? Math.round(totalMins / activeDays) : 0);
+  // Calculate rolling 24-hour focus time (Deep Focus + Saved Stopwatch)
+  const now = Date.now();
+  const oneDayAgo = now - 24 * 60 * 60 * 1000;
+  const computedRolling24h = (data?.sessions || [])
+    .filter((s) => {
+      const sessEnd = new Date(s.endTime || s.startTime || 0).getTime();
+      return sessEnd >= oneDayAgo;
+    })
+    .reduce((acc, s) => acc + (Number(s.actualMinutes || s.durationMinutes || s.minutes) || 0), 0);
+
+  const rolling24hMinutes = typeof summary?.rolling24hMinutes === 'number'
+    ? summary.rolling24hMinutes
+    : Math.round(computedRolling24h);
+
+  // Daily average focus time calculated over the last 7 calendar days (Total Focus / 7)
+  const last7DaysSeries = dailySeries.slice(-7);
+  const last7DaysMinutes = last7DaysSeries.reduce((acc, d) => acc + (d.minutes || 0), 0);
+  const dailyAvg7DaysMinutes = Math.round(last7DaysMinutes / 7);
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 pb-14">
@@ -89,32 +103,37 @@ export const ProgressPage = ({ user, onReload }) => {
       {/* 1. TOP SUMMARY CARDS */}
       {/* Desktop Layout: Tall Total Focus Card spanning height of 2 stacked cards beside it */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* Total Focus: Tall Card (spans 2 column rows on desktop) */}
+        {/* Total Focus: Rolling 24-Hour Active Focus Card */}
         <div className="md:col-span-2 p-6 rounded-3xl bg-white dark:bg-[#162420] border border-[#EAE5DD] dark:border-[#253D35] shadow-sm flex flex-col justify-between hover:shadow-md transition">
           <div>
             <div className="flex items-center space-x-2 text-xs font-bold text-[#576560] dark:text-[#8BA398] mb-3">
               <div className="w-8 h-8 rounded-xl bg-[#E8F5EE] dark:bg-[#1C2E29] flex items-center justify-center text-[#1B3B2F] dark:text-[#A3D9C9]">
                 <Clock className="w-4 h-4" />
               </div>
-              <span className="text-sm font-black text-[#1C2A24] dark:text-[#F2F7F4]">Total Focus</span>
+              <span className="text-sm font-black text-[#1C2A24] dark:text-[#F2F7F4]">
+                Total Focus Time (Last 24 Hours)
+              </span>
             </div>
 
             <div className="text-4xl sm:text-5xl font-black text-[#1C2A24] dark:text-[#F2F7F4] font-mono tracking-tight">
-              {formatDuration(totalMins)}
+              {formatDuration(rolling24hMinutes)}
             </div>
             <p className="text-xs text-[#8A9791] mt-1 font-medium">
-              Across {activeDays} active day{activeDays === 1 ? '' : 's'}
+              Rolling 24-hour active focus (Deep Focus + Stopwatch)
             </p>
           </div>
 
-          {/* Integrated Daily Average inside Total Focus */}
+          {/* Integrated Daily Average based on 7 calendar days */}
           <div className="mt-6 pt-4 border-t border-[#EAE5DD] dark:border-[#253D35] flex items-center justify-between">
             <div className="flex items-center space-x-2">
               <TrendingUp className="w-4 h-4 text-[#10B981]" />
-              <span className="text-xs font-bold text-[#576560] dark:text-[#8BA398]">Daily Average</span>
+              <div className="flex flex-col">
+                <span className="text-xs font-bold text-[#576560] dark:text-[#8BA398]">Daily Average Focus Time</span>
+                <span className="text-[10px] text-[#8A9791]">Over last 7 calendar days (Total / 7)</span>
+              </div>
             </div>
             <div className="text-xs sm:text-sm font-black font-mono text-[#1C2A24] dark:text-[#F2F7F4] bg-[#FAF8F5] dark:bg-[#1C2E29] px-3 py-1 rounded-xl border border-[#EAE5DD] dark:border-[#253D35]">
-              {formatDailyAverage(dailyAvgMinutes)}
+              {formatDailyAverage(dailyAvg7DaysMinutes)}
             </div>
           </div>
         </div>

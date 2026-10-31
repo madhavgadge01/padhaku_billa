@@ -179,10 +179,11 @@ export const api = {
       headers: getHeaders(),
     }).then(handleResponse),
 
-  stopSession: (sessionId) =>
+  stopSession: (sessionId, data = {}) =>
     fetch(`${API_BASE}/pomodoro/${sessionId}/stop`, {
       method: 'POST',
       headers: getHeaders(),
+      body: JSON.stringify(data),
     }).then(handleResponse),
 
   saveStopwatchSession: (payload) =>
