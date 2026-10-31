@@ -518,6 +518,7 @@ export function App() {
               initialSubject={focusedSubject}
               onUserUpdate={handleUserUpdate}
               onTimerRunningChange={setIsFocusTimerRunning}
+              onReload={loadUserData}
             />
           )}
 

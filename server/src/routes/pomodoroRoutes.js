@@ -24,6 +24,13 @@ import {
   scheduleSessionNotification,
   cancelSessionNotification,
 } from '../utils/notificationService.js';
+import { DailyTaskProgress } from '../models/DailyTaskProgress.js';
+import {
+  recordSessionToUnifiedProgress,
+  syncAndCleanDailyProgress,
+  getOrCreateDailyTaskProgress,
+  findMatchingScheduledTask,
+} from '../utils/dailyProgressEngine.js';
 
 const router = express.Router();
 
@@ -37,6 +44,9 @@ router.get('/active', requireAuth, async (req, res) => {
     const resetTime = req.user.dailyResetTime || '06:00';
     const now = new Date();
     const todayStudyDay = getStudyDayDate(now, resetTime, tzOffset);
+
+    // Sync and clean expired daily progress records and expired task exclusions
+    await syncAndCleanDailyProgress(req.user, tzOffset);
 
     // Find all sessions on today's study day that are in-progress, paused, or interrupted
     const activeSessions = await PomodoroSession.find({
@@ -76,12 +86,33 @@ router.get('/active', requireAuth, async (req, res) => {
       }
     }
 
+    // Load today's DailyTaskProgress records
+    const todayProgressDocs = await DailyTaskProgress.find({
+      userId: req.user._id,
+      dateStr: todayStudyDay,
+    });
+    const dailyProgress = {};
+    todayProgressDocs.forEach((p) => {
+      dailyProgress[p.normalizedName] = {
+        taskId: p.taskId,
+        taskName: p.taskName,
+        targetMinutes: p.targetMinutes,
+        completedMinutes: p.completedMinutes,
+        completedSeconds: p.completedSeconds,
+        remainingMinutes: p.remainingMinutes,
+        remainingSeconds: p.remainingSeconds,
+        isCompleted: p.isCompleted,
+        color: p.color,
+      };
+    });
+
     return res.json({
       success: true,
       todayStr: todayStudyDay,
       activeSessions,
       currentSession: activeSessions[0] || null,
       subjectProgress,
+      dailyProgress,
     });
   } catch (error) {
     console.error('[Pomodoro Error] Get Active:', error);
@@ -134,6 +165,21 @@ router.post('/start', requireAuth, async (req, res) => {
       taskDuration = Number(durationMinutes) > 0 ? Math.max(1, Math.min(720, Number(durationMinutes))) : (timetableSubject.targetMinutes || taskDuration);
     }
 
+    const dateStr = getStudyDayDate(now, resetTime, tzOffset);
+
+    // If duration was not explicitly customized by user, use unified task remaining time
+    if (!req.body.isCustomDuration && (!durationMinutes || Number(durationMinutes) === Number(timetableSubject?.targetMinutes))) {
+      const cleanLower = taskName.trim().toLowerCase();
+      const existingProg = await DailyTaskProgress.findOne({
+        userId: req.user._id,
+        dateStr,
+        normalizedName: cleanLower,
+      });
+      if (existingProg && existingProg.remainingMinutes > 0) {
+        taskDuration = existingProg.remainingMinutes;
+      }
+    }
+
     // 2. Ensure session.taskId has a valid Task ObjectId (schema requirement)
     let matchedTask = null;
     if (targetTaskId && mongoose.isValidObjectId(targetTaskId)) {
@@ -154,7 +200,6 @@ router.post('/start', requireAuth, async (req, res) => {
       await matchedTask.save();
     }
 
-    const dateStr = getStudyDayDate(now, resetTime, tzOffset);
     const dayOfWeek = getStudyDayOfWeek(now, resetTime, tzOffset);
     const hourOfDay = now.getHours();
     const isRestDay = isRestDayForUser(req.user, now, tzOffset);
@@ -339,6 +384,29 @@ router.post('/:sessionId/pause', requireAuth, async (req, res) => {
       penaltyCharged: coinDeducted,
     });
 
+    // Record delta progress to unified DailyTaskProgress
+    const tzOffset = getTzOffset(req);
+    const lastRecorded = session.lastRecordedProgressSeconds || 0;
+    const deltaSeconds = Math.max(0, (session.actualSeconds || 0) - lastRecorded);
+    if (deltaSeconds > 0) {
+      try {
+        await recordSessionToUnifiedProgress({
+          user,
+          taskName: session.taskName,
+          subjectId: session.subjectId,
+          taskId: session.taskId,
+          deltaSeconds,
+          sessionId: session._id,
+          sessionType: 'deep_focus',
+          isFinal: false,
+          tzOffset,
+        });
+        session.lastRecordedProgressSeconds = session.actualSeconds;
+      } catch (err) {
+        console.warn('[Pomodoro Pause] DailyTaskProgress notice:', err.message);
+      }
+    }
+
     await Promise.all([user.save(), session.save()]);
 
     return res.json({
@@ -490,6 +558,29 @@ router.post('/:sessionId/checkpoint', requireAuth, async (req, res) => {
       // Note: No coin penalty charged on tab close / reload / navigation
     }
 
+    // Record delta progress to unified DailyTaskProgress
+    const tzOffset = getTzOffset(req);
+    const lastRecorded = session.lastRecordedProgressSeconds || 0;
+    const deltaSeconds = Math.max(0, (session.actualSeconds || 0) - lastRecorded);
+    if (deltaSeconds > 0) {
+      try {
+        await recordSessionToUnifiedProgress({
+          user: req.user,
+          taskName: session.taskName,
+          subjectId: session.subjectId,
+          taskId: session.taskId,
+          deltaSeconds,
+          sessionId: session._id,
+          sessionType: 'deep_focus',
+          isFinal: Boolean(req.body.closing),
+          tzOffset,
+        });
+        session.lastRecordedProgressSeconds = session.actualSeconds;
+      } catch (err) {
+        console.warn('[Pomodoro Checkpoint] DailyTaskProgress notice:', err.message);
+      }
+    }
+
     await session.save();
 
     return res.json({
@@ -576,6 +667,29 @@ router.post('/:sessionId/complete', requireAuth, async (req, res) => {
 
     session.coinsEarned = sessionCoins;
     session.penaltyDeductions = penaltyDeductions;
+
+    // Record final delta progress to unified DailyTaskProgress
+    const lastRecorded = session.lastRecordedProgressSeconds || 0;
+    const deltaSeconds = Math.max(0, (session.actualSeconds || 0) - lastRecorded);
+    if (deltaSeconds > 0) {
+      try {
+        await recordSessionToUnifiedProgress({
+          user: req.user,
+          taskName: session.taskName,
+          subjectId: session.subjectId,
+          taskId: session.taskId,
+          deltaSeconds,
+          sessionId: session._id,
+          sessionType: 'deep_focus',
+          isFinal: true,
+          tzOffset,
+        });
+        session.lastRecordedProgressSeconds = session.actualSeconds;
+      } catch (err) {
+        console.warn('[Pomodoro Complete] DailyTaskProgress notice:', err.message);
+      }
+    }
+
     await session.save();
 
     const user = req.user;
@@ -755,6 +869,30 @@ router.post('/:sessionId/stop', requireAuth, async (req, res) => {
     session.coinsEarned = 0;
     session.expectedEndTime = null;
     cancelSessionNotification(session._id);
+
+    // Record stopped session delta progress to unified DailyTaskProgress
+    const tzOffset = getTzOffset(req);
+    const lastRecorded = session.lastRecordedProgressSeconds || 0;
+    const deltaSeconds = Math.max(0, (session.actualSeconds || 0) - lastRecorded);
+    if (deltaSeconds > 0) {
+      try {
+        await recordSessionToUnifiedProgress({
+          user: req.user,
+          taskName: session.taskName,
+          subjectId: session.subjectId,
+          taskId: session.taskId,
+          deltaSeconds,
+          sessionId: session._id,
+          sessionType: 'deep_focus',
+          isFinal: true,
+          tzOffset,
+        });
+        session.lastRecordedProgressSeconds = session.actualSeconds;
+      } catch (err) {
+        console.warn('[Pomodoro Stop] DailyTaskProgress notice:', err.message);
+      }
+    }
+
     await session.save();
 
     return res.json({
@@ -1006,26 +1144,38 @@ router.post('/stopwatch', requireAuth, async (req, res) => {
     let finalName = (activityName || taskName || name || '').trim();
     let targetSubjectId = subjectId || null;
 
-    // Check if matches a subject in weekly timetable
-    const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
-    let timetableMatch = null;
-    for (const d of DAYS) {
-      const found = (req.user.weeklyTimetable?.[d] || []).find(
-        (s) =>
-          (targetSubjectId && (s.id === targetSubjectId || s._id?.toString() === targetSubjectId)) ||
-          (finalName && s.name?.trim().toLowerCase() === finalName.toLowerCase())
-      );
-      if (found) {
-        timetableMatch = found;
-        break;
-      }
-    }
+    // Check if matches a subject in weekly timetable or scheduled task
+    const todayWeekday = getStudyDayKey(start, resetTime, tzOffset);
+    const matchedScheduledTask = await findMatchingScheduledTask(
+      req.user,
+      { taskId, subjectId: targetSubjectId, taskName: finalName },
+      todayWeekday
+    );
 
-    if (timetableMatch) {
-      finalName = timetableMatch.name;
-      targetSubjectId = timetableMatch.id || timetableMatch._id?.toString() || targetSubjectId;
-    } else if (!finalName) {
-      finalName = 'Stopwatch Focus';
+    let isExistingTask = false;
+    let assignedColor = '#C48255';
+    let sessionNumber = 1;
+    let stopwatchColorIndex = 0;
+
+    if (matchedScheduledTask) {
+      isExistingTask = true;
+      finalName = matchedScheduledTask.name;
+      targetSubjectId = matchedScheduledTask.id || matchedScheduledTask._id?.toString() || targetSubjectId;
+      // CRITICAL: NEVER use brown for existing daily tasks! Use task's original assigned color!
+      assignedColor = matchedScheduledTask.color || matchedScheduledTask.colorTag || '#3B82F6';
+    } else {
+      if (!finalName) {
+        finalName = 'Stopwatch Focus';
+      }
+      // Determine sessionNumber for custom activity
+      const priorCount = await PomodoroSession.countDocuments({
+        userId: req.user._id,
+        taskName: finalName,
+        sessionType: 'stopwatch',
+      });
+      sessionNumber = priorCount + 1;
+      stopwatchColorIndex = (sessionNumber - 1) % 2; // 0 = Light brown (#C48255), 1 = Dark brown (#5D3318)
+      assignedColor = stopwatchColorIndex === 0 ? '#C48255' : '#5D3318';
     }
 
     // Match or create Task for database reference
@@ -1043,23 +1193,13 @@ router.post('/stopwatch', requireAuth, async (req, res) => {
       matchedTask = new Task({
         userId: req.user._id,
         name: finalName,
-        colorTag: '#C48255',
+        colorTag: assignedColor,
         durationMinutes: Math.round(actualMinutes),
         currentStreak: 0,
         bestStreak: 0,
       });
       await matchedTask.save();
     }
-
-    // Determine sessionNumber for this activity
-    const priorCount = await PomodoroSession.countDocuments({
-      userId: req.user._id,
-      taskName: finalName,
-      sessionType: 'stopwatch',
-    });
-    const sessionNumber = priorCount + 1;
-    const stopwatchColorIndex = (sessionNumber - 1) % 2; // 0 = Light brown (#C48255), 1 = Dark brown (#5D3318)
-    const assignedColor = stopwatchColorIndex === 0 ? '#C48255' : '#5D3318';
 
     const session = new PomodoroSession({
       userId: req.user._id,
@@ -1077,6 +1217,7 @@ router.post('/stopwatch', requireAuth, async (req, res) => {
       actualSeconds: elapsedSeconds,
       actualMinutes,
       accumulatedSeconds: elapsedSeconds,
+      lastRecordedProgressSeconds: elapsedSeconds,
       startTime: start,
       endTime: end,
       status: 'completed',
@@ -1088,6 +1229,25 @@ router.post('/stopwatch', requireAuth, async (req, res) => {
 
     await session.save();
 
+    let progressResult = null;
+    if (isExistingTask) {
+      try {
+        progressResult = await recordSessionToUnifiedProgress({
+          user: req.user,
+          taskName: finalName,
+          subjectId: targetSubjectId,
+          taskId: matchedTask?._id,
+          actualSeconds: elapsedSeconds,
+          sessionId: session._id,
+          sessionType: 'stopwatch',
+          isFinal: true,
+          tzOffset,
+        });
+      } catch (err) {
+        console.warn('[Stopwatch Error] DailyTaskProgress update failed:', err.message);
+      }
+    }
+
     if (matchedTask) {
       try {
         await updateTaskStreak(req.user, matchedTask, dateStr);
@@ -1097,13 +1257,22 @@ router.post('/stopwatch', requireAuth, async (req, res) => {
     }
 
     console.log(
-      `[Stopwatch Service] Saved session: ${session._id} for "${finalName}" (${elapsedSeconds}s, ${actualMinutes}m) user: ${req.user._id} (Session #${sessionNumber})`
+      `[Stopwatch Service] Saved session: ${session._id} for "${finalName}" (${elapsedSeconds}s, ${actualMinutes}m) user: ${req.user._id} isExistingTask: ${isExistingTask} (Color: ${assignedColor})`
     );
 
     return res.status(201).json({
       success: true,
-      message: `Stopwatch session for "${finalName}" saved to focus history!`,
+      message: isExistingTask
+        ? `Stopwatch session for "${finalName}" saved to daily task progress!`
+        : `Stopwatch session for "${finalName}" saved to focus history!`,
       session,
+      isExistingTask,
+      progress: progressResult?.progress || null,
+      remainingMinutes: progressResult?.remainingMinutes ?? null,
+      completedMinutes: progressResult?.completedMinutes ?? null,
+      isCompleted: progressResult?.isCompleted ?? false,
+      userCoins: req.user.coins,
+      timetable: req.user.weeklyTimetable,
     });
   } catch (error) {
     console.error('[Pomodoro Error] Stopwatch save:', error);

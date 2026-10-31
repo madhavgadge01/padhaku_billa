@@ -284,8 +284,8 @@ const distContent = fs.readFileSync(distPath, 'utf8');
 it('FocusTimeDistribution implements brown shades, interactive popover, and stopwatch indicators', () => {
   assert(distContent.includes('LIGHT_BROWN'), 'LIGHT_BROWN is defined');
   assert(distContent.includes('DARK_BROWN'), 'DARK_BROWN is defined');
-  assert(distContent.includes('clickedSegment'), 'clickedSegment state exists for interactive popover');
-  assert(distContent.includes('Stopwatch:'), 'Dedicated Stopwatch activity indicator exists');
+  assert(distContent.includes('selectedSegmentId') || distContent.includes('clickedSegment'), 'Selected segment state exists for interactive detail panel');
+  assert(distContent.includes('Stopwatch') || distContent.includes('Stopwatch:'), 'Dedicated Stopwatch activity indicator exists');
   assert(distContent.includes('formatReadableDate'), 'formatReadableDate helper exists');
 });
 

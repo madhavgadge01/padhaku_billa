@@ -64,6 +64,10 @@ const PomodoroSessionSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    lastRecordedProgressSeconds: {
+      type: Number,
+      default: 0,
+    },
     accumulatedSeconds: {
       type: Number,
       default: 0,

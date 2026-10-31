@@ -44,12 +44,13 @@ router.get('/dashboard', requireAuth, async (req, res) => {
       .map((s) => {
         const cleanName = (s.taskName || 'Focus').trim();
         const isStopwatch = s.sessionType === 'stopwatch';
+        const hasTimetableMatch = Boolean(subjectColorMap[cleanName.toLowerCase()]);
         const subjectColor = subjectColorMap[cleanName.toLowerCase()] || '#10B981';
         const defaultColor = isStopwatch
           ? (s.stopwatchColorIndex === 1 ? '#5D3318' : '#C48255')
           : subjectColor;
         const color = isStopwatch
-          ? (s.colorTag || defaultColor)
+          ? (hasTimetableMatch ? subjectColor : (s.colorTag || defaultColor))
           : (subjectColorMap[cleanName.toLowerCase()] || s.colorTag || '#3B82F6');
         const mins = calculateSessionFocusMinutes(s);
         const dStr = s.dateStr || getStudyDayDate(s.startTime, resetTime, tzOffset);

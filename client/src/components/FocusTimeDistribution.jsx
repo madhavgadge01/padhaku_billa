@@ -221,15 +221,22 @@ export const FocusTimeDistribution = ({
       let sessionNumber = s.sessionNumber;
       let sessionColor = s.color || subjectColor;
 
+      const isExistingTask = Boolean(timetableColorMap[name.toLowerCase()]);
+
       if (isStopwatch) {
-        if (typeof sessionNumber !== 'number' || sessionNumber < 1) {
-          stopwatchCountMap[name] = (stopwatchCountMap[name] || 0) + 1;
-          sessionNumber = stopwatchCountMap[name];
+        if (isExistingTask) {
+          // CRITICAL: User selected an existing daily task -> ALWAYS use original task color!
+          sessionColor = subjectColor;
         } else {
-          stopwatchCountMap[name] = Math.max(stopwatchCountMap[name] || 0, sessionNumber);
+          // Custom activity -> Alternating brown shades: 1st -> Light Brown, 2nd -> Dark Brown, etc.
+          if (typeof sessionNumber !== 'number' || sessionNumber < 1) {
+            stopwatchCountMap[name] = (stopwatchCountMap[name] || 0) + 1;
+            sessionNumber = stopwatchCountMap[name];
+          } else {
+            stopwatchCountMap[name] = Math.max(stopwatchCountMap[name] || 0, sessionNumber);
+          }
+          sessionColor = sessionNumber % 2 === 1 ? LIGHT_BROWN : DARK_BROWN;
         }
-        // Alternating brown shades: 1st -> Light Brown, 2nd -> Dark Brown, 3rd -> Light Brown, etc.
-        sessionColor = sessionNumber % 2 === 1 ? LIGHT_BROWN : DARK_BROWN;
       }
 
       const mins = Number(s.durationMinutes || s.actualMinutes || s.minutes) ||

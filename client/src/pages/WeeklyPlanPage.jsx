@@ -646,7 +646,16 @@ export const WeeklyPlanPage = ({
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[#576560] dark:text-[#8BA398] mt-1 font-medium">
                       <span className="flex items-center space-x-1">
                         <Clock className="w-3 h-3 flex-shrink-0" />
-                        <span>{subject.targetMinutes || 45} mins target</span>
+                        {activeDay === todayKey && subject.remainingMinutes !== undefined && !isCompletedForToday ? (
+                          <span>
+                            <strong className="text-[#10b981] font-bold">{subject.remainingMinutes}m remaining</strong> / {subject.targetMinutes || 45}m target
+                            {subject.completedMinutes > 0 && (
+                              <span className="ml-1 opacity-80">({subject.completedMinutes}m done)</span>
+                            )}
+                          </span>
+                        ) : (
+                          <span>{subject.targetMinutes || 45} mins target</span>
+                        )}
                       </span>
                       <span className="inline-flex items-center space-x-1 text-[#D97724] dark:text-[#F59E0B] font-bold">
                         <Flame className="w-3.5 h-3.5 fill-current flex-shrink-0" />
@@ -654,7 +663,7 @@ export const WeeklyPlanPage = ({
                       </span>
                       {activeDay === todayKey && isCompletedForToday && (
                         <span className="text-[#10b981] font-bold text-[11px]">
-                          ✓ Completed today
+                          ✓ Completed today {subject.completedMinutes > 0 ? `(${subject.completedMinutes}m)` : ''}
                         </span>
                       )}
                     </div>

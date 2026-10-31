@@ -498,10 +498,26 @@ export const QuestsPage = ({
                       </h4>
 
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[#576560] dark:text-[#8BA398] mt-1 font-medium">
-                        <span className="flex items-center space-x-1">
-                          <Clock className="w-3 h-3 flex-shrink-0" />
-                          <span>{task.durationMinutes || task.targetMinutes || 25}m focus block</span>
-                        </span>
+                        {isDone ? (
+                          <span className="flex items-center space-x-1 text-[#10b981] font-bold">
+                            <CheckCircle2 className="w-3 h-3 flex-shrink-0" />
+                            <span>Completed ({task.completedMinutes || task.targetMinutes || 25}m target)</span>
+                          </span>
+                        ) : (
+                          <span className="flex items-center space-x-1">
+                            <Clock className="w-3 h-3 flex-shrink-0" />
+                            {task.remainingMinutes !== undefined ? (
+                              <span>
+                                <strong className="text-[#10b981] font-bold">{task.remainingMinutes} min remaining</strong> / {task.targetMinutes || 25}m target
+                                {task.completedMinutes > 0 && (
+                                  <span className="ml-1 opacity-80">({task.completedMinutes}m completed)</span>
+                                )}
+                              </span>
+                            ) : (
+                              <span>{task.durationMinutes || task.targetMinutes || 25}m focus block</span>
+                            )}
+                          </span>
+                        )}
                         <span className="inline-flex items-center space-x-1 text-[#D97724] dark:text-[#F59E0B] font-bold">
                           <Flame className="w-3.5 h-3.5 fill-current flex-shrink-0" />
                           <span>{task.currentStreak || 0}d streak</span>

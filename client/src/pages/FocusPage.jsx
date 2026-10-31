@@ -90,6 +90,7 @@ export const FocusPage = ({
   initialSubject = null,
   onUserUpdate,
   onTimerRunningChange,
+  onReload,
 }) => {
   const resetTime = user?.dailyResetTime || '06:00';
   const todayKey = getStudyDayKey(new Date(), resetTime);
@@ -485,7 +486,11 @@ export const FocusPage = ({
     const subId = subject.id || subject._id;
     const subName = (subject.name || '').trim().toLowerCase();
     const effMins = getEffectiveGoalMinutes(subject);
-    const defaultGoalSecs = effMins * 60;
+    const initialStartingMins =
+      typeof subject.remainingMinutes === 'number' && subject.remainingMinutes > 0
+        ? subject.remainingMinutes
+        : effMins;
+    const defaultGoalSecs = initialStartingMins * 60;
 
     api.getActiveSessions()
       .then((res) => {
@@ -550,11 +555,21 @@ export const FocusPage = ({
           return;
         }
 
-        setTotalSeconds(defaultGoalSecs);
-        totalSecondsRef.current = defaultGoalSecs;
-        setTimeLeft(defaultGoalSecs);
-        setCustomMinutes(effMins);
-        customMinutesRef.current = effMins;
+        // Check if backend returned latest unified DailyTaskProgress for this subject
+        let liveStartingMins = initialStartingMins;
+        if (res?.dailyProgress && res.dailyProgress[subName]) {
+          const dp = res.dailyProgress[subName];
+          if (typeof dp.remainingMinutes === 'number' && dp.remainingMinutes > 0) {
+            liveStartingMins = dp.remainingMinutes;
+          }
+        }
+        const liveGoalSecs = liveStartingMins * 60;
+
+        setTotalSeconds(liveGoalSecs);
+        totalSecondsRef.current = liveGoalSecs;
+        setTimeLeft(liveGoalSecs);
+        setCustomMinutes(liveStartingMins);
+        customMinutesRef.current = liveStartingMins;
         accumulatedElapsedRef.current = 0;
         setAccumulatedSeconds(0);
         intervalElapsedRef.current = 0;
@@ -570,8 +585,8 @@ export const FocusPage = ({
         setTotalSeconds(defaultGoalSecs);
         totalSecondsRef.current = defaultGoalSecs;
         setTimeLeft(defaultGoalSecs);
-        setCustomMinutes(effMins);
-        customMinutesRef.current = effMins;
+        setCustomMinutes(initialStartingMins);
+        customMinutesRef.current = initialStartingMins;
       });
   };
 
@@ -923,8 +938,27 @@ export const FocusPage = ({
         });
       } catch (e) {}
 
+      // Refresh timetable and active state immediately without page refresh
+      try {
+        const freshTimetable = await api.getWeeklyTimetable();
+        if (freshTimetable?.success && freshTimetable.todaySchedule?.subjects) {
+          setTimetableToday(freshTimetable.todaySchedule.subjects);
+          if (selectedSubject) {
+            const updatedMatch = freshTimetable.todaySchedule.subjects.find(
+              (s) => s.id === selectedSubject.id || s.name.toLowerCase() === selectedSubject.name.toLowerCase()
+            );
+            if (updatedMatch) {
+              setSelectedSubject(updatedMatch);
+              restoreSubjectProgress(updatedMatch);
+            }
+          }
+        }
+      } catch (e) {}
+
       onReload?.();
-      fetchActiveSessions?.();
+      if (res?.user) {
+        onUserUpdate?.(res.user);
+      }
     }
   };
 
@@ -2477,9 +2511,21 @@ export const FocusPage = ({
                             />
                             <span className="truncate">{sub.name}</span>
                           </div>
-                          <span className="text-[10px] text-[#8A9791] flex-shrink-0 font-mono ml-2">
-                            {effMins}m
-                          </span>
+                          <div className="flex items-center space-x-1.5 flex-shrink-0 font-mono ml-2">
+                            {sub.isCompleted || sub.completedToday ? (
+                              <span className="text-[10px] text-[#10B981] font-bold">
+                                ✓ Done ({effMins}m)
+                              </span>
+                            ) : sub.remainingMinutes !== undefined ? (
+                              <span className="text-[10px] text-[#8A9791]">
+                                <strong className="text-[#10B981] dark:text-[#34D399]">{sub.remainingMinutes}m rem</strong> / {effMins}m
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-[#8A9791]">
+                                {effMins}m
+                              </span>
+                            )}
+                          </div>
                         </button>
                       );
                     })}

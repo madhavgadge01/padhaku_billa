@@ -2,6 +2,7 @@ import express from 'express';
 import mongoose from 'mongoose';
 import { Task } from '../models/Task.js';
 import { User } from '../models/User.js';
+import { DailyTaskProgress } from '../models/DailyTaskProgress.js';
 import { CoinTransaction } from '../models/CoinTransaction.js';
 import { requireAuth } from '../middleware/auth.js';
 import {
@@ -15,6 +16,10 @@ import {
   updateGlobalStreakIfEligible,
   rollbackStreakIfUncompleted,
 } from '../utils/streakEngine.js';
+import {
+  getDailyTasksWithUnifiedProgress,
+  syncAndCleanDailyProgress,
+} from '../utils/dailyProgressEngine.js';
 
 const router = express.Router();
 
@@ -133,59 +138,22 @@ router.get('/', requireAuth, async (req, res) => {
   try {
     const tzOffset = getTzOffset(req);
     const resetTime = req.user.dailyResetTime || '06:00';
-    const todayStr = getStudyDayDate(new Date(), resetTime, tzOffset);
-    const todayWeekday = getStudyDayKey(new Date(), resetTime, tzOffset);
     const isRestDayToday = isRestDayForUser(req.user, new Date(), tzOffset);
 
     // Refresh streak integrity
     await checkAndRefreshStreaks(req.user, tzOffset);
 
-    const rawTimetableToday = req.user.weeklyTimetable?.[todayWeekday] || [];
-    const timetableToday = rawTimetableToday.filter(
-      (t) => !t.isArchived && (!Array.isArray(t.excludedDates) || !t.excludedDates.includes(todayStr))
-    );
-    let tasks = [];
+    // Fetch unified daily tasks populated with authoritative DailyTaskProgress
+    const { tasks, todayDateStr, todayWeekday } = await getDailyTasksWithUnifiedProgress(req.user, tzOffset);
 
-    if (timetableToday.length > 0) {
-      tasks = timetableToday.map((t) => ({
-        _id: t.id,
-        id: t.id,
-        name: t.name,
-        durationMinutes: t.targetMinutes || 25,
-        targetMinutes: t.targetMinutes || 25,
-        colorTag: t.color || '#3B82F6',
-        color: t.color || '#3B82F6',
-        completedToday: Array.isArray(t.completedDates) && t.completedDates.includes(todayStr),
-        completedDates: t.completedDates || [],
-        weekday: todayWeekday,
-        repeatDaily: Boolean(t.repeatDaily),
-      }));
-    } else {
-      // Fallback to legacy task collection if user has never configured weekly plan
-      const legacyTasks = (await Task.find({ userId: req.user._id, isArchived: { $ne: true } }).sort({ createdAt: -1 }))
-        .filter((t) => !Array.isArray(t.excludedDates) || !t.excludedDates.includes(todayStr));
-      tasks = legacyTasks.map((t) => ({
-        _id: t._id,
-        id: t._id,
-        name: t.name,
-        durationMinutes: t.durationMinutes || 25,
-        targetMinutes: t.durationMinutes || 25,
-        colorTag: t.colorTag || '#3B82F6',
-        color: t.colorTag || '#3B82F6',
-        completedToday: t.lastCompletedDate === todayStr || t.completedToday,
-        completedDates: t.lastCompletedDate ? [t.lastCompletedDate] : [],
-        weekday: todayWeekday,
-      }));
-    }
-
-    const completedCount = tasks.filter((t) => t.completedToday).length;
+    const completedCount = tasks.filter((t) => t.completedToday || t.isCompleted).length;
     const allCompletedToday = tasks.length > 0 && completedCount === tasks.length;
 
     return res.json({
       success: true,
       tasks,
       studyDay: {
-        dateStr: todayStr,
+        dateStr: todayDateStr,
         weekday: todayWeekday,
         dailyResetTime: resetTime,
         isRestDayToday,
@@ -672,6 +640,27 @@ const handleToggleCompletion = async (req, res) => {
           }
         }
 
+        // Sync unified DailyTaskProgress
+        try {
+          const normName = (legTask.name || '').trim().toLowerCase();
+          if (normName) {
+            const prog = await DailyTaskProgress.findOne({ userId: user._id, dateStr: todayStr, normalizedName: normName });
+            if (prog) {
+              prog.isCompleted = !wasDone;
+              if (!wasDone) {
+                prog.remainingMinutes = 0;
+                prog.remainingSeconds = 0;
+              } else {
+                prog.remainingMinutes = Math.max(0, prog.targetMinutes - prog.completedMinutes);
+                prog.remainingSeconds = Math.max(0, prog.targetMinutes * 60 - prog.completedSeconds);
+              }
+              await prog.save();
+            }
+          }
+        } catch (e) {
+          console.warn('[Task Toggle] DailyTaskProgress sync notice:', e.message);
+        }
+
         await legTask.save();
         await user.save();
 
@@ -782,6 +771,25 @@ const handleToggleCompletion = async (req, res) => {
       }
     }
 
+    // Sync unified DailyTaskProgress for timetable subject
+    try {
+      const normName = subject.name.trim().toLowerCase();
+      const prog = await DailyTaskProgress.findOne({ userId: user._id, dateStr: todayStr, normalizedName: normName });
+      if (prog) {
+        prog.isCompleted = !isDone;
+        if (!isDone) {
+          prog.remainingMinutes = 0;
+          prog.remainingSeconds = 0;
+        } else {
+          prog.remainingMinutes = Math.max(0, prog.targetMinutes - prog.completedMinutes);
+          prog.remainingSeconds = Math.max(0, prog.targetMinutes * 60 - prog.completedSeconds);
+        }
+        await prog.save();
+      }
+    } catch (e) {
+      console.warn('[Subject Toggle] DailyTaskProgress sync notice:', e.message);
+    }
+
     await user.save();
 
     // Check today's completion stats
@@ -844,6 +852,9 @@ router.get('/timetable/weekly', requireAuth, async (req, res) => {
     // Refresh streak status
     await checkAndRefreshStreaks(req.user, tzOffset);
 
+    // Sync and clean expired daily progress records and expired date exclusions
+    await syncAndCleanDailyProgress(req.user, tzOffset);
+
     const timetable = req.user.weeklyTimetable || {
       monday: [],
       tuesday: [],
@@ -854,10 +865,21 @@ router.get('/timetable/weekly', requireAuth, async (req, res) => {
       sunday: [],
     };
 
-    // Enrich each weekday's subjects with completedToday flag
+    // Load today's DailyTaskProgress records to enrich timetable with live unified progress
+    const todayProgressDocs = await DailyTaskProgress.find({
+      userId: req.user._id,
+      dateStr: todayStr,
+    });
+    const todayProgressMap = {};
+    todayProgressDocs.forEach((p) => {
+      todayProgressMap[p.normalizedName] = p;
+    });
+
+    // Enrich each weekday's subjects with completedToday and unified progress metrics
     const enrichedTimetable = {};
     DAYS.forEach((d) => {
       const dayDateStr = getWeekdayDateStr(d, new Date(), resetTime, tzOffset);
+      const isToday = d === todayKey;
       enrichedTimetable[d] = (timetable[d] || [])
         .filter((sub) => {
           if (sub.isArchived) return false;
@@ -868,9 +890,24 @@ router.get('/timetable/weekly', requireAuth, async (req, res) => {
         })
         .map((sub) => {
           const itemObj = sub.toObject ? sub.toObject() : { ...sub };
+          const normName = (itemObj.name || '').trim().toLowerCase();
+          const progress = isToday ? todayProgressMap[normName] : null;
+          const targetMins = itemObj.targetMinutes || 25;
+          const completedMins = progress ? progress.completedMinutes : 0;
+          const completedSecs = progress ? progress.completedSeconds : 0;
+          const isDone = (progress && progress.isCompleted) ||
+            (Array.isArray(itemObj.completedDates) && itemObj.completedDates.includes(todayStr));
+          const remSecs = isDone ? 0 : (progress ? progress.remainingSeconds : targetMins * 60);
+          const remMins = isDone ? 0 : (progress ? progress.remainingMinutes : targetMins);
+
           return {
             ...itemObj,
-            completedToday: Array.isArray(itemObj.completedDates) && itemObj.completedDates.includes(todayStr),
+            completedToday: isDone,
+            isCompleted: isDone,
+            completedMinutes: completedMins,
+            completedSeconds: completedSecs,
+            remainingMinutes: remMins,
+            remainingSeconds: remSecs,
           };
         });
     });

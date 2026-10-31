@@ -155,10 +155,27 @@ export const StopwatchSaveModal = ({
             </div>
           </div>
           <div className="text-right">
-            <span className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-[#C48255]/15 dark:bg-[#C48255]/25 border border-[#C48255]/30 text-[11px] font-black text-[#8A4820] dark:text-[#E2A67D]">
-              <span className="w-2 h-2 rounded-full bg-[#C48255]"></span>
-              <span>Stopwatch</span>
-            </span>
+            {selectedSubjectId !== 'custom' && currentSubject ? (
+              <span
+                className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-[11px] font-black border"
+                style={{
+                  backgroundColor: `${currentSubject.color || currentSubject.colorTag || '#3B82F6'}15`,
+                  borderColor: `${currentSubject.color || currentSubject.colorTag || '#3B82F6'}40`,
+                  color: currentSubject.color || currentSubject.colorTag || '#3B82F6',
+                }}
+              >
+                <span
+                  className="w-2 h-2 rounded-full"
+                  style={{ backgroundColor: currentSubject.color || currentSubject.colorTag || '#3B82F6' }}
+                />
+                <span className="truncate max-w-[120px]">{currentSubject.name}</span>
+              </span>
+            ) : (
+              <span className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-[#C48255]/15 dark:bg-[#C48255]/25 border border-[#C48255]/30 text-[11px] font-black text-[#8A4820] dark:text-[#E2A67D]">
+                <span className="w-2 h-2 rounded-full bg-[#C48255]"></span>
+                <span>Custom Stopwatch</span>
+              </span>
+            )}
           </div>
         </div>
 
@@ -168,7 +185,7 @@ export const StopwatchSaveModal = ({
           <div className="space-y-1.5">
             <label className="text-xs font-black uppercase tracking-wider text-stone-600 dark:text-stone-300 flex items-center space-x-1.5">
               <BookOpen className="w-3.5 h-3.5 text-[#10B981]" />
-              <span>Associate Task</span>
+              <span>Associate Daily Task</span>
             </label>
             <select
               value={selectedSubjectId}
@@ -178,13 +195,44 @@ export const StopwatchSaveModal = ({
               }}
               className="w-full px-3.5 py-2.5 rounded-xl bg-stone-50 dark:bg-[#182420] border border-stone-200 dark:border-white/10 text-xs sm:text-sm font-bold text-[#0D1F17] dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#10B981] transition cursor-pointer"
             >
-              {subjects.map((sub) => (
-                <option key={sub.id || sub._id} value={sub.id || sub._id}>
-                  {sub.name} {sub.targetMinutes ? `(${sub.targetMinutes}m goal)` : ''}
-                </option>
-              ))}
-              <option value="custom">+ Custom name</option>
+              {subjects.map((sub) => {
+                const targetM = sub.targetMinutes || sub.durationMinutes || 25;
+                const remM = sub.remainingMinutes !== undefined ? sub.remainingMinutes : targetM;
+                const isDone = sub.isCompleted || sub.completedToday;
+                return (
+                  <option key={sub.id || sub._id} value={sub.id || sub._id}>
+                    {sub.name} — {isDone ? `Completed (${targetM}m target)` : `${remM}m remaining / ${targetM}m target`}
+                  </option>
+                );
+              })}
+              <option value="custom">+ Custom activity name</option>
             </select>
+
+            {/* Live Progress Preview */}
+            {selectedSubjectId !== 'custom' && currentSubject && (
+              <div className="p-2.5 rounded-xl bg-stone-100/70 dark:bg-white/5 border border-stone-200/60 dark:border-white/5 text-[11px] text-stone-600 dark:text-stone-300 flex flex-wrap items-center justify-between gap-1 mt-1">
+                <span>
+                  Remaining before session:{' '}
+                  <strong>
+                    {currentSubject.remainingMinutes !== undefined
+                      ? `${currentSubject.remainingMinutes} min`
+                      : `${currentSubject.targetMinutes || 25} min`}
+                  </strong>
+                </span>
+                <span>
+                  After saving:{' '}
+                  <strong className="text-emerald-700 dark:text-emerald-400 font-bold">
+                    {Math.max(
+                      0,
+                      (currentSubject.remainingMinutes !== undefined
+                        ? currentSubject.remainingMinutes
+                        : currentSubject.targetMinutes || 25) - Math.round(elapsedSecs / 60)
+                    )}{' '}
+                    min remaining
+                  </strong>
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Custom Subject Name if selected */}
