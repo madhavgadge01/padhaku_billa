@@ -3,10 +3,10 @@
  * Accurately aligns dates, streaks, and timetables with the user's custom daily reset time
  */
 
-export const parseResetTime = (resetTimeStr = '06:00') => {
-  if (!resetTimeStr || typeof resetTimeStr !== 'string') return { hours: 6, minutes: 0 };
+export const parseResetTime = (resetTimeStr = '00:00') => {
+  if (!resetTimeStr || typeof resetTimeStr !== 'string') return { hours: 0, minutes: 0 };
   const parts = resetTimeStr.split(':').map(Number);
-  const hours = isNaN(parts[0]) ? 6 : Math.max(0, Math.min(23, parts[0]));
+  const hours = isNaN(parts[0]) ? 0 : Math.max(0, Math.min(23, parts[0]));
   const minutes = isNaN(parts[1]) ? 0 : Math.max(0, Math.min(59, parts[1]));
   return { hours, minutes };
 };
@@ -14,7 +14,7 @@ export const parseResetTime = (resetTimeStr = '06:00') => {
 /**
  * Returns 'YYYY-MM-DD' representing the current study day based on configured reset time
  */
-export const getStudyDayDate = (date = new Date(), resetTime = '06:00') => {
+export const getStudyDayDate = (date = new Date(), resetTime = '00:00') => {
   const d = new Date(date);
   const { hours, minutes } = parseResetTime(resetTime);
   const shiftMs = (hours * 60 + minutes) * 60 * 1000;
@@ -28,7 +28,7 @@ export const getStudyDayDate = (date = new Date(), resetTime = '06:00') => {
 /**
  * Returns day of week number (0 = Sunday, 1 = Monday, ..., 6 = Saturday)
  */
-export const getStudyDayOfWeek = (date = new Date(), resetTime = '06:00') => {
+export const getStudyDayOfWeek = (date = new Date(), resetTime = '00:00') => {
   const d = new Date(date);
   const { hours, minutes } = parseResetTime(resetTime);
   const shiftMs = (hours * 60 + minutes) * 60 * 1000;
@@ -39,16 +39,16 @@ export const getStudyDayOfWeek = (date = new Date(), resetTime = '06:00') => {
 /**
  * Returns weekday key 'monday' | 'tuesday' | ... | 'sunday'
  */
-export const getStudyDayKey = (date = new Date(), resetTime = '06:00') => {
+export const getStudyDayKey = (date = new Date(), resetTime = '00:00') => {
   const dow = getStudyDayOfWeek(date, resetTime);
   const keys = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
   return keys[dow];
 };
 
 /**
- * Human-friendly format for a reset time (e.g. '06:00' -> '6:00 AM')
+ * Human-friendly format for a reset time (e.g. '00:00' -> '12:00 AM')
  */
-export const formatResetTimeDisplay = (timeStr = '06:00') => {
+export const formatResetTimeDisplay = (timeStr = '00:00') => {
   const { hours, minutes } = parseResetTime(timeStr);
   const ampm = hours >= 12 ? 'PM' : 'AM';
   const displayHours = hours % 12 === 0 ? 12 : hours % 12;
@@ -59,7 +59,7 @@ export const formatResetTimeDisplay = (timeStr = '06:00') => {
 /**
  * Calculates the exact 'YYYY-MM-DD' date string for any weekday in the current study week
  */
-export const getWeekdayDateStr = (targetDayKey, date = new Date(), resetTime = '06:00') => {
+export const getWeekdayDateStr = (targetDayKey, date = new Date(), resetTime = '00:00') => {
   const todayKey = getStudyDayKey(date, resetTime);
   const todayDateStr = getStudyDayDate(date, resetTime);
   const weekdayOrder = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];

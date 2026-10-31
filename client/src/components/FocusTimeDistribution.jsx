@@ -13,6 +13,7 @@ import {
   TrendingUp,
 } from 'lucide-react';
 import { sounds } from '../audio/soundEffects.js';
+import { getStudyDayDate } from '../utils/dateUtils.js';
 
 // Brown shades for Stopwatch sessions
 export const LIGHT_BROWN = '#C48255';
@@ -174,9 +175,16 @@ export const FocusTimeDistribution = ({
   // Mode: 'day' | 'week'
   const [mode, setMode] = useState('day');
 
-  // Currently selected date for Day mode (default: today)
-  const todayKey = useMemo(() => formatDateKey(new Date()), []);
+  // Currently selected date for Day mode (default: today based on reset time)
+  const todayKey = useMemo(
+    () => getStudyDayDate(new Date(), user?.dailyResetTime || '00:00'),
+    [user?.dailyResetTime]
+  );
   const [selectedDayStr, setSelectedDayStr] = useState(todayKey);
+
+  useEffect(() => {
+    setSelectedDayStr(todayKey);
+  }, [todayKey]);
 
   // Currently selected reference date for Week mode (default: today)
   const [selectedWeekDate, setSelectedWeekDate] = useState(() => new Date());
@@ -242,7 +250,7 @@ export const FocusTimeDistribution = ({
       const mins = Number(s.durationMinutes || s.actualMinutes || s.minutes) ||
         (s.actualSeconds ? Math.max(1, Math.round((s.actualSeconds / 60) * 10) / 10) : 25);
 
-      const dStr = s.dateStr || (s.startTime ? formatDateKey(new Date(s.startTime)) : todayKey);
+      const dStr = s.dateStr || (s.startTime ? getStudyDayDate(new Date(s.startTime), user?.dailyResetTime || '00:00') : todayKey);
 
       return {
         ...s,

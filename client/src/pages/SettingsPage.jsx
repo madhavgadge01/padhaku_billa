@@ -46,9 +46,9 @@ const DAYS_OF_WEEK = [
 ];
 
 const RESET_TIME_OPTIONS = [
-  { label: '12:00 AM — Midnight', value: '00:00' },
+  { label: '12:00 AM — Midnight (Default)', value: '00:00' },
   { label: '3:00 AM', value: '03:00' },
-  { label: '6:00 AM (Recommended)', value: '06:00' },
+  { label: '6:00 AM', value: '06:00' },
   { label: '8:00 AM', value: '08:00' },
 ];
 
@@ -69,7 +69,7 @@ export const SettingsPage = ({
   const [linkedin, setLinkedin] = useState(user?.socialLinks?.linkedin || '');
 
   // Study Preferences: Daily Reset Time
-  const currentResetTime = user?.dailyResetTime || '06:00';
+  const currentResetTime = user?.dailyResetTime || '00:00';
   const [resetTime, setResetTime] = useState(currentResetTime);
   const [isCustomReset, setIsCustomReset] = useState(
     !RESET_TIME_OPTIONS.some((o) => o.value === currentResetTime)

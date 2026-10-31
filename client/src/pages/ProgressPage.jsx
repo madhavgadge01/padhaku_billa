@@ -10,6 +10,7 @@ import { api } from '../services/api.js';
 import { FocusLevelCard } from '../components/FocusLevelCard.jsx';
 import { ActivityContributionCalendar } from '../components/ActivityContributionCalendar.jsx';
 import { FocusTimeDistribution } from '../components/FocusTimeDistribution.jsx';
+import { formatResetTimeDisplay, getStudyDayDate } from '../utils/dateUtils.js';
 
 /**
  * Helper to format duration in minutes to e.g. "2h 35m", "45m", "0m"
@@ -69,19 +70,22 @@ export const ProgressPage = ({ user, onReload }) => {
     );
   }
 
-  // Calculate rolling 24-hour focus time (Deep Focus + Saved Stopwatch)
-  const now = Date.now();
-  const oneDayAgo = now - 24 * 60 * 60 * 1000;
-  const computedRolling24h = (data?.sessions || [])
+  // Total Focus Time for today (Deep Focus + Saved Stopwatch, resets at user's configured dailyResetTime)
+  const resetTime = user?.dailyResetTime || data?.dailyResetTime || '00:00';
+  const todayDateStr = data?.todayDateStr || getStudyDayDate(new Date(), resetTime);
+
+  const computedTodayMinutes = (data?.sessions || [])
     .filter((s) => {
-      const sessEnd = new Date(s.endTime || s.startTime || 0).getTime();
-      return sessEnd >= oneDayAgo;
+      const sDateStr = s.dateStr || (s.startTime ? getStudyDayDate(new Date(s.startTime), resetTime) : null);
+      return sDateStr === todayDateStr;
     })
     .reduce((acc, s) => acc + (Number(s.actualMinutes || s.durationMinutes || s.minutes) || 0), 0);
 
-  const rolling24hMinutes = typeof summary?.rolling24hMinutes === 'number'
-    ? summary.rolling24hMinutes
-    : Math.round(computedRolling24h);
+  const totalFocusMinutes = typeof summary?.todayFocusMinutes === 'number'
+    ? summary.todayFocusMinutes
+    : (typeof summary?.totalFocusMinutes === 'number'
+      ? summary.totalFocusMinutes
+      : Math.round(computedTodayMinutes));
 
   // Daily average focus time calculated over the last 7 calendar days (Total Focus / 7)
   const last7DaysSeries = dailySeries.slice(-7);
@@ -103,7 +107,7 @@ export const ProgressPage = ({ user, onReload }) => {
       {/* 1. TOP SUMMARY CARDS */}
       {/* Desktop Layout: Tall Total Focus Card spanning height of 2 stacked cards beside it */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* Total Focus: Rolling 24-Hour Active Focus Card */}
+        {/* Total Focus: Today's Active Focus Card */}
         <div className="md:col-span-2 p-6 rounded-3xl bg-white dark:bg-[#162420] border border-[#EAE5DD] dark:border-[#253D35] shadow-sm flex flex-col justify-between hover:shadow-md transition">
           <div>
             <div className="flex items-center space-x-2 text-xs font-bold text-[#576560] dark:text-[#8BA398] mb-3">
@@ -111,15 +115,15 @@ export const ProgressPage = ({ user, onReload }) => {
                 <Clock className="w-4 h-4" />
               </div>
               <span className="text-sm font-black text-[#1C2A24] dark:text-[#F2F7F4]">
-                Total Focus Time (Last 24 Hours)
+                Total Focus Time
               </span>
             </div>
 
             <div className="text-4xl sm:text-5xl font-black text-[#1C2A24] dark:text-[#F2F7F4] font-mono tracking-tight">
-              {formatDuration(rolling24hMinutes)}
+              {formatDuration(totalFocusMinutes)}
             </div>
             <p className="text-xs text-[#8A9791] mt-1 font-medium">
-              Rolling 24-hour active focus (Deep Focus + Stopwatch)
+              Today's active focus (resets daily at {formatResetTimeDisplay(resetTime)})
             </p>
           </div>
 
@@ -178,15 +182,15 @@ export const ProgressPage = ({ user, onReload }) => {
         </div>
       </div>
 
-      {/* 2. YOUR FOCUS LEVEL CARD */}
-      <FocusLevelCard data={data} user={user} compact={false} />
-
-      {/* 3. FOCUS TIME BY QUEST TAG (WITH DAY / WEEK TOGGLE & STACKED BARS) */}
+      {/* 2. FOCUS TIME BY TASKS TAG (DONUT CHART & DETAIL PANEL) */}
       <FocusTimeDistribution
         sessions={data?.sessions}
         tagDistribution={data?.tagDistribution}
         user={user}
       />
+
+      {/* 3. YOUR FOCUS LEVEL CARD (DIRECTLY BELOW FOCUS TIME BY TASKS TAG) */}
+      <FocusLevelCard data={data} user={user} compact={false} />
 
       {/* 4. DAILY FOCUS MINUTES (LAST 14 DAYS) — EXACTLY PRESERVED AS REQUIRED */}
       <div className="bg-white dark:bg-[#162420] rounded-3xl border border-[#EAE5DD] dark:border-[#253D35] p-6 shadow-sm">

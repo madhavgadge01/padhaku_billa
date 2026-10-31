@@ -137,7 +137,7 @@ const normalizeWeeklyTimetable = (timetable = {}, existingWeeklyTimetable = {}) 
 router.get('/', requireAuth, async (req, res) => {
   try {
     const tzOffset = getTzOffset(req);
-    const resetTime = req.user.dailyResetTime || '06:00';
+    const resetTime = req.user.dailyResetTime || '00:00';
     const isRestDayToday = isRestDayForUser(req.user, new Date(), tzOffset);
 
     // Refresh streak integrity
@@ -186,7 +186,7 @@ router.post('/', requireAuth, async (req, res) => {
     }
 
     const tzOffset = getTzOffset(req);
-    const resetTime = req.user.dailyResetTime || '06:00';
+    const resetTime = req.user.dailyResetTime || '00:00';
     const todayWeekday = getStudyDayKey(new Date(), resetTime, tzOffset);
     const targetWeekday = weekday || todayWeekday;
 
@@ -428,7 +428,7 @@ router.delete('/:id', requireAuth, async (req, res) => {
     const targetId = req.params.id;
     const user = req.user;
     const tzOffset = getTzOffset(req);
-    const resetTime = user.dailyResetTime || '06:00';
+    const resetTime = user.dailyResetTime || '00:00';
     const todayWeekday = getStudyDayKey(new Date(), resetTime, tzOffset);
     const todayStr = getStudyDayDate(new Date(), resetTime, tzOffset);
 
@@ -573,7 +573,7 @@ const handleToggleCompletion = async (req, res) => {
 
     const weekday = req.body?.weekday || req.body?.day;
     const tzOffset = getTzOffset(req);
-    const resetTime = req.user.dailyResetTime || '06:00';
+    const resetTime = req.user.dailyResetTime || '00:00';
     const todayStr = getStudyDayDate(new Date(), resetTime, tzOffset);
     const todayKey = weekday || getStudyDayKey(new Date(), resetTime, tzOffset);
 
@@ -844,7 +844,7 @@ router.post('/timetable/toggle-complete', requireAuth, handleToggleCompletion);
 router.get('/timetable/weekly', requireAuth, async (req, res) => {
   try {
     const tzOffset = getTzOffset(req);
-    const resetTime = req.user.dailyResetTime || '06:00';
+    const resetTime = req.user.dailyResetTime || '00:00';
     const todayStr = getStudyDayDate(new Date(), resetTime, tzOffset);
     const todayKey = getStudyDayKey(new Date(), resetTime, tzOffset);
     const isRestDayToday = isRestDayForUser(req.user, new Date(), tzOffset);
@@ -954,7 +954,7 @@ router.put('/timetable/weekly', requireAuth, async (req, res) => {
 
     const user = req.user;
     const tzOffset = getTzOffset(req);
-    const resetTime = user.dailyResetTime || '06:00';
+    const resetTime = user.dailyResetTime || '00:00';
     const todayStr = getStudyDayDate(new Date(), resetTime, tzOffset);
 
     // Normalize and enforce unique subject colors, preserving excludedDates, repeatDaily, etc.

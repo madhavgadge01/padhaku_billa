@@ -72,7 +72,7 @@ export const QuestsPage = ({
   const [repeatDaily, setRepeatDaily] = useState(true);
   const [colorFeedback, setColorFeedback] = useState('');
 
-  const resetTime = user?.dailyResetTime || '06:00';
+  const resetTime = user?.dailyResetTime || '00:00';
   const todayKey = getStudyDayKey(new Date(), resetTime);
   const todayDateStr = getStudyDayDate(new Date(), resetTime);
   const todayName = DAY_NAMES[todayKey] || 'Today';
@@ -291,10 +291,7 @@ export const QuestsPage = ({
           </div>
 
           <div className="text-left sm:text-right pt-2 sm:pt-0 border-t sm:border-t-0 border-[#EAE5DD]/60 dark:border-[#253D35]/60 flex sm:block items-center justify-between">
-            <span className="text-[10px] sm:text-[11px] font-bold text-[#8A9791] block">STUDY DAY RESET</span>
-            <span className="text-xs font-mono font-bold text-[#1B3B2F] dark:text-[#A3D9C9]">
-              {formatResetTimeDisplay(resetTime)}
-            </span>
+         
           </div>
         </div>
 
@@ -322,76 +319,7 @@ export const QuestsPage = ({
         </div>
 
         {/* 7-Day Consistency Ribbon */}
-        <div className="pt-2">
-          <span className="text-[10px] font-black uppercase tracking-wider text-[#8A9791] block mb-2">
-            Weekly Study Plan Rhythm
-          </span>
-
-          <div className="overflow-x-auto pb-1 sm:pb-0 scrollbar-none -mx-1 px-1 sm:mx-0 sm:px-0">
-            <div className="grid grid-cols-7 gap-1.5 sm:gap-2 min-w-[340px] sm:min-w-0">
-              {WEEKDAY_ORDER.map((day) => {
-                const isToday = day.key === todayKey;
-                const dayDateStr = getWeekdayDateStr(day.key);
-                const dayTasks = effectiveTimetable[day.key] || [];
-                const dayTotal = dayTasks.length;
-                const todayIdx = WEEKDAY_ORDER.findIndex((w) => w.key === todayKey);
-                const dayIdx = WEEKDAY_ORDER.findIndex((w) => w.key === day.key);
-                const isPastInWeek = dayIdx < todayIdx;
-
-                const dayCompletedCount = isToday
-                  ? completedCount
-                  : dayTasks.filter(
-                      (t) => Array.isArray(t.completedDates) && t.completedDates.includes(dayDateStr)
-                    ).length;
-
-                const isDayDone =
-                  (dayTotal > 0 && dayCompletedCount === dayTotal) ||
-                  completedDates.includes(dayDateStr);
-
-                return (
-                  <div
-                    key={day.key}
-                    className={`p-2 rounded-2xl border text-center transition flex flex-col items-center justify-between ${
-                      isToday
-                        ? 'border-[#1B3B2F] dark:border-[#A3D9C9] bg-[#E8F5EE]/70 dark:bg-[#162420] shadow-sm'
-                        : isDayDone
-                        ? 'border-[#C8E6D5] dark:border-[#2B5246] bg-[#E8F5EE]/40 dark:bg-[#162420]/60'
-                        : 'border-[#EAE5DD] dark:border-[#253D35] bg-[#FAF8F5]/50 dark:bg-[#1C2E29]/40'
-                    }`}
-                  >
-                    <span className={`text-[10px] font-bold ${isToday ? 'text-[#1B3B2F] dark:text-[#A3D9C9]' : isDayDone ? 'text-[#10b981]' : 'text-[#8A9791]'}`}>
-                      {day.short}
-                    </span>
-
-                    <div className="my-1.5">
-                      {dayTotal === 0 ? (
-                        <span className="text-xs text-[#8A9791] font-mono">—</span>
-                      ) : isDayDone ? (
-                        <CheckCircle2 className="w-4 h-4 text-[#10b981] fill-current" />
-                      ) : isToday ? (
-                        <span className="text-xs font-bold text-[#D97724] font-mono">
-                          {completedCount}/{totalTasks}
-                        </span>
-                      ) : isPastInWeek ? (
-                        <span className="text-[11px] text-[#576560] dark:text-[#8BA398] font-mono">
-                          {dayCompletedCount}/{dayTotal}
-                        </span>
-                      ) : (
-                        <span className="text-[11px] text-[#576560] dark:text-[#8BA398] font-mono">
-                          {dayTotal}q
-                        </span>
-                      )}
-                    </div>
-
-                    <span className="text-[9px] text-[#8A9791] truncate max-w-full">
-                      {isToday ? 'Today' : isDayDone ? 'Done' : `${dayTotal} planned`}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
+       
       </div>
 
       {/* Filter Tabs */}
@@ -522,17 +450,8 @@ export const QuestsPage = ({
                           <Flame className="w-3.5 h-3.5 fill-current flex-shrink-0" />
                           <span>{task.currentStreak || 0}d streak</span>
                         </span>
-                        {Boolean(task.repeatDaily) && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#FAF8F5] dark:bg-[#1C2E29] text-[#1B3B2F] dark:text-[#A3D9C9] border border-[#EAE5DD] dark:border-[#253D35]">
-                            🔁 Daily
-                          </span>
-                        )}
-                        <span
-                          className="px-2 py-0.5 rounded-full text-[10px] font-bold"
-                          style={getSubjectBadgeStyle(colorInfo.hex)}
-                        >
-                          {colorInfo.name}
-                        </span>
+                     
+                      
                       </div>
                     </div>
                   </div>

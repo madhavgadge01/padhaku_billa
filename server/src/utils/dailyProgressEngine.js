@@ -90,7 +90,7 @@ export const findMatchingScheduledTask = async (user, { taskId, subjectId, taskN
  */
 export const syncAndCleanDailyProgress = async (user, tzOffset = null) => {
   if (!user || !user._id) return;
-  const resetTime = user.dailyResetTime || '06:00';
+  const resetTime = user.dailyResetTime || '00:00';
   const todayDateStr = getStudyDayDate(new Date(), resetTime, tzOffset);
 
   try {
@@ -183,7 +183,7 @@ export const getOrCreateDailyTaskProgress = async (user, taskEntity, todayDateSt
  */
 export const getDailyTasksWithUnifiedProgress = async (user, tzOffset = null) => {
   if (!user || !user._id) return { tasks: [], todayDateStr: '', todayWeekday: '' };
-  const resetTime = user.dailyResetTime || '06:00';
+  const resetTime = user.dailyResetTime || '00:00';
   const todayDateStr = getStudyDayDate(new Date(), resetTime, tzOffset);
   const todayWeekday = getStudyDayKey(new Date(), resetTime, tzOffset);
 
@@ -283,7 +283,7 @@ export const recordSessionToUnifiedProgress = async ({
     return { isCustom: true, progress: null };
   }
 
-  const resetTime = user.dailyResetTime || '06:00';
+  const resetTime = user.dailyResetTime || '00:00';
   const todayDateStr = getStudyDayDate(new Date(), resetTime, tzOffset);
   const todayWeekday = getStudyDayKey(new Date(), resetTime, tzOffset);
 

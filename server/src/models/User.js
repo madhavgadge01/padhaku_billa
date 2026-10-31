@@ -59,8 +59,12 @@ const UserSchema = new mongoose.Schema(
     },
     dailyResetTime: {
       type: String,
-      default: '06:00', // Default 6:00 AM reset time for night-time friendly schedules
+      default: '00:00', // Default 12:00 AM (Midnight)
       trim: true,
+    },
+    hasExplicitResetTime: {
+      type: Boolean,
+      default: false,
     },
     timezone: {
       type: String,

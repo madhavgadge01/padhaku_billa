@@ -7,23 +7,21 @@ import { PomodoroSession } from '../models/PomodoroSession.js';
  * Parses "HH:mm" time string into hours and minutes
  * Defaults to 6:00 AM
  */
-export const parseResetTime = (resetTimeStr = '06:00') => {
-  if (!resetTimeStr || typeof resetTimeStr !== 'string') return { hours: 6, minutes: 0 };
+export const parseResetTime = (resetTimeStr = '00:00') => {
+  if (!resetTimeStr || typeof resetTimeStr !== 'string') return { hours: 0, minutes: 0 };
   const parts = resetTimeStr.split(':').map(Number);
-  const hours = isNaN(parts[0]) ? 6 : Math.max(0, Math.min(23, parts[0]));
+  const hours = isNaN(parts[0]) ? 0 : Math.max(0, Math.min(23, parts[0]));
   const minutes = isNaN(parts[1]) ? 0 : Math.max(0, Math.min(59, parts[1]));
   return { hours, minutes };
 };
 
 /**
  * Calculates the exact study day date string ('YYYY-MM-DD') based on configured daily reset time
- * E.g. If reset time is 06:00:
+ * E.g. If reset time is 00:00:
  * Monday 10:00 PM -> Monday
- * Tuesday 02:00 AM -> Monday (still part of Monday's study day)
- * Tuesday 05:30 AM -> Monday
- * Tuesday 06:00 AM -> Tuesday (new study day begins)
+ * Tuesday 12:00 AM -> Tuesday (new study day begins)
  */
-export const getStudyDayDate = (date = new Date(), resetTime = '06:00', timezoneOffsetMinutes = null) => {
+export const getStudyDayDate = (date = new Date(), resetTime = '00:00', timezoneOffsetMinutes = null) => {
   const d = new Date(date);
   const { hours, minutes } = parseResetTime(resetTime);
   const shiftMs = (hours * 60 + minutes) * 60 * 1000;
@@ -49,7 +47,7 @@ export const getStudyDayDate = (date = new Date(), resetTime = '06:00', timezone
  * Calculates the day of the week (0 = Sunday, 1 = Monday, ..., 6 = Saturday)
  * according to the configured daily reset boundary
  */
-export const getStudyDayOfWeek = (date = new Date(), resetTime = '06:00', timezoneOffsetMinutes = null) => {
+export const getStudyDayOfWeek = (date = new Date(), resetTime = '00:00', timezoneOffsetMinutes = null) => {
   const d = new Date(date);
   const { hours, minutes } = parseResetTime(resetTime);
   const shiftMs = (hours * 60 + minutes) * 60 * 1000;
@@ -67,7 +65,7 @@ export const getStudyDayOfWeek = (date = new Date(), resetTime = '06:00', timezo
 /**
  * Returns weekday key for weekly timetable: 'sunday' | 'monday' | ... | 'saturday'
  */
-export const getStudyDayKey = (date = new Date(), resetTime = '06:00', timezoneOffsetMinutes = null) => {
+export const getStudyDayKey = (date = new Date(), resetTime = '00:00', timezoneOffsetMinutes = null) => {
   const dow = getStudyDayOfWeek(date, resetTime, timezoneOffsetMinutes);
   const keys = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
   return keys[dow];
@@ -89,7 +87,7 @@ export const getPreviousStudyDayDate = (dateStr) => {
 /**
  * Calculates the exact 'YYYY-MM-DD' date string for any weekday in the current study week
  */
-export const getWeekdayDateStr = (targetDayKey, date = new Date(), resetTime = '06:00', timezoneOffsetMinutes = null) => {
+export const getWeekdayDateStr = (targetDayKey, date = new Date(), resetTime = '00:00', timezoneOffsetMinutes = null) => {
   const todayKey = getStudyDayKey(date, resetTime, timezoneOffsetMinutes);
   const todayDateStr = getStudyDayDate(date, resetTime, timezoneOffsetMinutes);
   const weekdayOrder = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
@@ -117,11 +115,22 @@ export const getDayDiff = (dateStr1, dateStr2) => {
 };
 
 /**
+ * Human-friendly format for a reset time (e.g. '00:00' -> '12:00 AM')
+ */
+export const formatResetTimeDisplay = (timeStr = '00:00') => {
+  const { hours, minutes } = parseResetTime(timeStr);
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  const displayHours = hours % 12 === 0 ? 12 : hours % 12;
+  const displayMinutes = String(minutes).padStart(2, '0');
+  return `${displayHours}:${displayMinutes} ${ampm}`;
+};
+
+/**
  * Checks if a given timestamp represents a protected rest day under user's study day boundary
  */
 export const isRestDayForUser = (user, date = new Date(), clientTimezoneOffset = null) => {
   if (!user.restDay || !user.restDay.enabled) return false;
-  const resetTime = user.dailyResetTime || '06:00';
+  const resetTime = user.dailyResetTime || '00:00';
   const studyDow = getStudyDayOfWeek(date, resetTime, clientTimezoneOffset);
   return studyDow === user.restDay.dayOfWeek;
 };
@@ -234,7 +243,7 @@ export const calculateSubjectStreak = (completedDates = [], todayStr, user = nul
  * Night-time friendly: An active study day in progress NEVER breaks an existing streak!
  */
 export const checkAndRefreshStreaks = async (user, clientTimezoneOffset = null) => {
-  const resetTime = user.dailyResetTime || '06:00';
+  const resetTime = user.dailyResetTime || '00:00';
   const todayStr = getStudyDayDate(new Date(), resetTime, clientTimezoneOffset);
   const todayKey = getStudyDayKey(new Date(), resetTime, clientTimezoneOffset);
   const isRestDayToday = isRestDayForUser(user, new Date(), clientTimezoneOffset);
@@ -371,7 +380,7 @@ export const checkAndRefreshStreaks = async (user, clientTimezoneOffset = null) 
  * Updates individual task streak upon completion of a session
  */
 export const updateTaskStreak = async (task, user, clientTimezoneOffset = null) => {
-  const resetTime = user.dailyResetTime || '06:00';
+  const resetTime = user.dailyResetTime || '00:00';
   const todayStr = getStudyDayDate(new Date(), resetTime, clientTimezoneOffset);
   const yesterdayStr = getPreviousStudyDayDate(todayStr);
 
@@ -406,7 +415,7 @@ export const updateTaskStreak = async (task, user, clientTimezoneOffset = null) 
  * Updates global main day streak if ALL tasks scheduled for today are completed
  */
 export const updateGlobalStreakIfEligible = async (user, clientTimezoneOffset = null) => {
-  const resetTime = user.dailyResetTime || '06:00';
+  const resetTime = user.dailyResetTime || '00:00';
   const todayStr = getStudyDayDate(new Date(), resetTime, clientTimezoneOffset);
   const todayKey = getStudyDayKey(new Date(), resetTime, clientTimezoneOffset);
 
@@ -594,7 +603,7 @@ export const checkAndAwardDailyBonus = async (user, dateStr) => {
  * Rolls back global streak if a user unchecks a task on today's study day
  */
 export const rollbackStreakIfUncompleted = async (user, clientTimezoneOffset = null) => {
-  const resetTime = user.dailyResetTime || '06:00';
+  const resetTime = user.dailyResetTime || '00:00';
   const todayStr = getStudyDayDate(new Date(), resetTime, clientTimezoneOffset);
   const todayKey = getStudyDayKey(new Date(), resetTime, clientTimezoneOffset);
 

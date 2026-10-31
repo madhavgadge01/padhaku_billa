@@ -19,7 +19,7 @@ router.get('/dashboard', requireAuth, async (req, res) => {
   try {
     const userId = req.user._id;
     const tzOffset = req.headers['x-timezone-offset'] !== undefined ? Number(req.headers['x-timezone-offset']) : null;
-    const resetTime = req.user.dailyResetTime || '06:00';
+    const resetTime = req.user.dailyResetTime || '00:00';
 
     // Reconcile any interrupted or stale sessions first
     await reconcileOrphanedSessions(userId);
@@ -249,22 +249,15 @@ router.get('/dashboard', requireAuth, async (req, res) => {
     const averageDailyHours = Math.round((totalHoursLogged / uniqueDays) * 10) / 10;
     const averageDailyMinutes = Math.round(totalMinutesLogged / uniqueDays);
 
-    // Rolling 24-hour focus time: genuine active focus time from sessions in the last 24 hours
-    const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    const rolling24hMinutes = Math.round(
-      allSessions
-        .filter((s) => {
-          const sessEnd = new Date(s.endTime || s.startTime);
-          return sessEnd.getTime() >= oneDayAgo.getTime();
-        })
-        .reduce((acc, s) => acc + calculateSessionFocusMinutes(s), 0)
-    );
-    const rolling24hHours = Math.round((rolling24hMinutes / 60) * 10) / 10;
-
-    // 6. Calibrated Focus Level (0 - 100%) based on 14-day rolling actual focus hours/day
+    // Total Focus Time based on user's configured daily reset time boundary:
+    // Count all actual study time recorded on today's study day (between previous reset time and next reset time)
     const todayStr = getStudyDayDate(new Date(), resetTime, tzOffset);
     const todayStats = dateMap[todayStr] || { minutes: 0, sessions: 0 };
-    const todayMinutes = todayStats.minutes;
+    const todayFocusMinutes = Math.round(todayStats.minutes);
+    const todayFocusHours = Math.round((todayFocusMinutes / 60) * 10) / 10;
+    const todayMinutes = todayFocusMinutes;
+
+    // 6. Calibrated Focus Level (0 - 100%) based on 14-day rolling actual focus hours/day
 
     // 14-day rolling window calculation
     const fourteenDaysMinutes = last14Days.reduce((acc, d) => acc + (d.minutes || 0), 0);
@@ -309,11 +302,18 @@ router.get('/dashboard', requireAuth, async (req, res) => {
 
     return res.json({
       success: true,
+      todayDateStr: todayStr,
+      dailyResetTime: resetTime,
       summary: {
         totalHoursLogged,
         totalMinutesLogged,
-        rolling24hMinutes,
-        rolling24hHours,
+        todayFocusMinutes,
+        todayFocusHours,
+        totalFocusMinutes: todayFocusMinutes,
+        todayMinutes: todayFocusMinutes,
+        todayHours: todayFocusHours,
+        rolling24hMinutes: todayFocusMinutes, // Aliased to today's focus time for backward compatibility
+        rolling24hHours: todayFocusHours,
         totalSessionsCount,
         totalQuestsCompleted,
         totalCoinsAccumulated,
@@ -322,6 +322,8 @@ router.get('/dashboard', requireAuth, async (req, res) => {
         uniqueDaysLogged: uniqueDays,
         currentStreak: req.user.streaks?.currentGlobalStreak || 0,
         bestStreak: req.user.streaks?.bestGlobalStreak || 0,
+        todayStr,
+        dailyResetTime: resetTime,
       },
       focusLevel,
       sessions: sessionHistory,

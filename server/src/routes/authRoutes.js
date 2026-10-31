@@ -485,6 +485,7 @@ router.post('/onboarding', requireAuth, async (req, res) => {
 
     if (dailyResetTime) {
       user.dailyResetTime = String(dailyResetTime).trim();
+      user.hasExplicitResetTime = true;
     }
     if (timezone) {
       user.timezone = timezone;
@@ -530,7 +531,10 @@ router.put('/study-preferences', requireAuth, async (req, res) => {
     const { dailyResetTime, restDay, timezone, studyStartDate } = req.body;
     const user = req.user;
 
-    if (dailyResetTime) user.dailyResetTime = dailyResetTime.trim();
+    if (dailyResetTime) {
+      user.dailyResetTime = dailyResetTime.trim();
+      user.hasExplicitResetTime = true;
+    }
     if (timezone) user.timezone = timezone;
     if (studyStartDate) user.studyStartDate = studyStartDate.trim();
     if (restDay) {

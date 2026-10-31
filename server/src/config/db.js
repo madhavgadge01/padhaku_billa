@@ -35,6 +35,21 @@ export const connectDB = async () => {
     console.log(
       `[Database] MongoDB Connected Successfully: ${conn.connection.host}/${conn.connection.name}`
     );
+
+    // Apply default reset time migration: users with legacy default 06:00 move to 00:00 (12:00 AM Midnight)
+    try {
+      const { User } = await import('../models/User.js');
+      const res = await User.updateMany(
+        { dailyResetTime: '06:00', hasExplicitResetTime: { $ne: true } },
+        { $set: { dailyResetTime: '00:00' } }
+      );
+      if (res?.modifiedCount > 0) {
+        console.log(`[Database Migration] Migrated ${res.modifiedCount} users with default 06:00 setting to 00:00 (12:00 AM Midnight).`);
+      }
+    } catch (migErr) {
+      console.warn('[Database Migration Notice]:', migErr.message);
+    }
+
     return conn;
   } catch (error) {
     console.error(

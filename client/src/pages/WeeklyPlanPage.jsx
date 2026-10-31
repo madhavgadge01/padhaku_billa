@@ -53,7 +53,7 @@ export const WeeklyPlanPage = ({
   onDeleteTask,
   isRestDayToday = false,
 }) => {
-  const resetTime = user?.dailyResetTime || '06:00';
+  const resetTime = user?.dailyResetTime || '00:00';
   const todayKey = getStudyDayKey(new Date(), resetTime);
   const todayStr = getStudyDayDate(new Date(), resetTime);
 
@@ -626,21 +626,8 @@ export const WeeklyPlanPage = ({
                       >
                         {subject.name}
                       </h4>
-                      <span
-                        className="px-2 py-0.5 rounded-full text-[10px] font-bold"
-                        style={getSubjectBadgeStyle(colorInfo.hex)}
-                      >
-                        {colorInfo.name}
-                      </span>
-                      {WEEKDAYS.every((d) =>
-                        (timetable[d.key] || []).some(
-                          (s) => s.id === subject.id || s.name.trim().toLowerCase() === subject.name.trim().toLowerCase()
-                        )
-                      ) && (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#E8F5EE] dark:bg-[#1C2E29] text-[#1B3B2F] dark:text-[#A3D9C9] border border-[#C8E6D5] dark:border-[#2B5246]">
-                          Daily
-                        </span>
-                      )}
+                  
+                 
                     </div>
 
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[#576560] dark:text-[#8BA398] mt-1 font-medium">

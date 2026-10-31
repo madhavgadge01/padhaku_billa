@@ -203,7 +203,7 @@ export const HomePage = ({
     }, 1600);
   };
 
-  const resetTime = user?.dailyResetTime || '06:00';
+  const resetTime = user?.dailyResetTime || '00:00';
   const studyDayKey = getStudyDayKey(new Date(), resetTime);
   const todaySubjects = timetable?.[studyDayKey] || [];
   const completedSubjectsCount = todaySubjects.filter((s) => s.completedToday).length;
@@ -721,13 +721,6 @@ export const HomePage = ({
 
       </div>
 
-      {/* --- YOUR FOCUS LEVEL (COMPACT HOME VIEW) --- */}
-      <FocusLevelCard
-        data={analytics}
-        user={user}
-        compact={true}
-        onNavigate={onNavigate}
-      />
     </div>
   );
 };

@@ -81,7 +81,7 @@ export const ActivityContributionCalendar = ({
 
   // Generate 365 rolling days up to today's active study day
   const { weeks, totalYearMinutes, totalYearDays } = useMemo(() => {
-    const resetTime = user?.dailyResetTime || '06:00';
+    const resetTime = user?.dailyResetTime || '00:00';
     const todayStudyDayStr = getStudyDayDate(new Date(), resetTime);
     const parts = todayStudyDayStr.split('-').map(Number);
     const anchorDate = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2], 12));

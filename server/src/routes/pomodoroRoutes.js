@@ -41,7 +41,7 @@ const getTzOffset = (req) =>
 router.get('/active', requireAuth, async (req, res) => {
   try {
     const tzOffset = getTzOffset(req);
-    const resetTime = req.user.dailyResetTime || '06:00';
+    const resetTime = req.user.dailyResetTime || '00:00';
     const now = new Date();
     const todayStudyDay = getStudyDayDate(now, resetTime, tzOffset);
 
@@ -131,7 +131,7 @@ router.post('/start', requireAuth, async (req, res) => {
     let taskDuration = Number(durationMinutes) > 0 ? Math.max(1, Math.min(720, Number(durationMinutes))) : 25;
 
     const tzOffset = getTzOffset(req);
-    const resetTime = req.user.dailyResetTime || '06:00';
+    const resetTime = req.user.dailyResetTime || '00:00';
     const now = new Date();
     const todayWeekday = getStudyDayKey(now, resetTime, tzOffset);
 
@@ -628,7 +628,7 @@ router.post('/:sessionId/complete', requireAuth, async (req, res) => {
     }
 
     const tzOffset = getTzOffset(req);
-    const resetTime = req.user.dailyResetTime || '06:00';
+    const resetTime = req.user.dailyResetTime || '00:00';
     const now = new Date();
     const todayStudyDay = getStudyDayDate(now, resetTime, tzOffset);
     const todayStudyKey = getStudyDayKey(now, resetTime, tzOffset);
@@ -947,7 +947,7 @@ router.post('/daily-goal-override', requireAuth, async (req, res) => {
     const requestedMins = Math.max(5, Math.min(720, Number(targetMinutes) || 25));
     const user = req.user;
     const tzOffset = getTzOffset(req);
-    const resetTime = user.dailyResetTime || '06:00';
+    const resetTime = user.dailyResetTime || '00:00';
     const todayStr = getStudyDayDate(new Date(), resetTime, tzOffset);
     const todayKey = getStudyDayKey(new Date(), resetTime, tzOffset);
 
@@ -1060,7 +1060,7 @@ router.delete('/daily-goal-override', requireAuth, async (req, res) => {
     const { subjectId, subjectName } = req.body;
     const user = req.user;
     const tzOffset = getTzOffset(req);
-    const resetTime = user.dailyResetTime || '06:00';
+    const resetTime = user.dailyResetTime || '00:00';
     const todayStr = getStudyDayDate(new Date(), resetTime, tzOffset);
     const todayKey = getStudyDayKey(new Date(), resetTime, tzOffset);
 
@@ -1131,7 +1131,7 @@ router.post('/stopwatch', requireAuth, async (req, res) => {
     const elapsedSeconds = Math.round(rawSeconds);
     const actualMinutes = Math.max(1, Math.round((elapsedSeconds / 60) * 10) / 10);
     const tzOffset = getTzOffset(req);
-    const resetTime = req.user.dailyResetTime || '06:00';
+    const resetTime = req.user.dailyResetTime || '00:00';
     const now = new Date();
     const start = startTime ? new Date(startTime) : new Date(now.getTime() - elapsedSeconds * 1000);
     const end = endTime ? new Date(endTime) : now;

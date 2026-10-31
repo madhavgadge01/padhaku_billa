@@ -92,7 +92,7 @@ export const FocusPage = ({
   onTimerRunningChange,
   onReload,
 }) => {
-  const resetTime = user?.dailyResetTime || '06:00';
+  const resetTime = user?.dailyResetTime || '00:00';
   const todayKey = getStudyDayKey(new Date(), resetTime);
   const todayDateStr = getStudyDayDate(new Date(), resetTime);
 
@@ -2758,34 +2758,7 @@ export const FocusPage = ({
               </div>
 
               {/* Session Metrics Bar (Total Duration, Elapsed Time, Remaining Time, Status) */}
-              {(isRunning || isPaused || accumulatedSeconds > 0) && (
-                <div className="mt-3 w-full max-w-md mx-auto grid grid-cols-2 sm:grid-cols-4 gap-2 px-3 py-2.5 rounded-2xl bg-[#F8FAF9] dark:bg-[#16201C] border border-emerald-900/5 dark:border-white/5 text-[11px] shadow-xs">
-                  <div className="flex flex-col items-center justify-center p-1.5 rounded-xl bg-white dark:bg-[#111A16] border border-emerald-900/5 dark:border-white/5">
-                    <span className="text-[9px] font-extrabold uppercase tracking-wider text-[#64748B] dark:text-[#94A3B8]">Total Duration</span>
-                    <span className="font-mono font-black text-[#0D1F17] dark:text-white mt-0.5">{formatDigitalHMS(totalSeconds)}</span>
-                  </div>
-                  <div className="flex flex-col items-center justify-center p-1.5 rounded-xl bg-white dark:bg-[#111A16] border border-emerald-900/5 dark:border-white/5">
-                    <span className="text-[9px] font-extrabold uppercase tracking-wider text-[#64748B] dark:text-[#94A3B8]">Elapsed Time</span>
-                    <span className="font-mono font-black text-emerald-600 dark:text-[#34D399] mt-0.5">{formatDigitalHMS(accumulatedSeconds)}</span>
-                  </div>
-                  <div className="flex flex-col items-center justify-center p-1.5 rounded-xl bg-white dark:bg-[#111A16] border border-emerald-900/5 dark:border-white/5">
-                    <span className="text-[9px] font-extrabold uppercase tracking-wider text-[#64748B] dark:text-[#94A3B8]">Remaining</span>
-                    <span className="font-mono font-black text-[#0D1F17] dark:text-white mt-0.5">{formatDigitalHMS(timeLeft)}</span>
-                  </div>
-                  <div className="flex flex-col items-center justify-center p-1.5 rounded-xl bg-white dark:bg-[#111A16] border border-emerald-900/5 dark:border-white/5">
-                    <span className="text-[9px] font-extrabold uppercase tracking-wider text-[#64748B] dark:text-[#94A3B8]">Status</span>
-                    <span className={`font-black uppercase tracking-wider mt-0.5 ${
-                      isPaused
-                        ? 'text-amber-500'
-                        : isRunning
-                        ? 'text-emerald-500 animate-pulse'
-                        : 'text-stone-400'
-                    }`}>
-                      {isPaused ? 'PAUSED' : isRunning ? 'IN FLOW' : 'READY'}
-                    </span>
-                  </div>
-                </div>
-              )}
+           
 
               {/* Radial Timer Dial with HUGE Interactive Numbers */}
               <div className="relative z-0 my-8 flex items-center justify-center w-full min-h-[350px] sm:min-h-[380px]">

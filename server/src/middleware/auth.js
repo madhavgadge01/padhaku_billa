@@ -24,6 +24,16 @@ export const requireAuth = async (req, res, next) => {
       return res.status(401).json({ success: false, message: 'User session expired or user not found.' });
     }
 
+    // Auto-migrate users with legacy default 06:00 to new 00:00 (12:00 AM Midnight) default
+    if (!user.hasExplicitResetTime && (!user.dailyResetTime || user.dailyResetTime === '06:00')) {
+      user.dailyResetTime = '00:00';
+      try {
+        await user.save();
+      } catch (saveErr) {
+        console.warn('[Auth Middleware] User reset migration notice:', saveErr.message);
+      }
+    }
+
     req.user = user;
     next();
   } catch (error) {
