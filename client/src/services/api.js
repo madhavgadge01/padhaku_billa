@@ -107,11 +107,17 @@ export const api = {
       body: JSON.stringify(payload),
     }).then(handleResponse),
 
-  deleteTask: (id) =>
-    fetch(`${API_BASE}/tasks/${id}`, {
+  deleteTask: (id, options = {}) => {
+    const params = new URLSearchParams();
+    if (options.scope) params.append('scope', options.scope);
+    if (options.day) params.append('day', options.day);
+    if (options.dateStr) params.append('dateStr', options.dateStr);
+    const qs = params.toString();
+    return fetch(`${API_BASE}/tasks/${id}${qs ? `?${qs}` : ''}`, {
       method: 'DELETE',
       headers: getHeaders(),
-    }).then(handleResponse),
+    }).then(handleResponse);
+  },
 
   toggleTask: (id, weekday) =>
     fetch(`${API_BASE}/tasks/${id}/toggle`, {

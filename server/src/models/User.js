@@ -83,6 +83,8 @@ const UserSchema = new mongoose.Schema(
           lastCompletedDate: { type: String, default: '' },
           order: { type: Number, default: 0 },
           repeatDaily: { type: Boolean, default: false },
+          excludedDates: { type: [String], default: [] },
+          isArchived: { type: Boolean, default: false },
         },
       ],
       tuesday: [
@@ -97,6 +99,8 @@ const UserSchema = new mongoose.Schema(
           lastCompletedDate: { type: String, default: '' },
           order: { type: Number, default: 0 },
           repeatDaily: { type: Boolean, default: false },
+          excludedDates: { type: [String], default: [] },
+          isArchived: { type: Boolean, default: false },
         },
       ],
       wednesday: [
@@ -111,6 +115,8 @@ const UserSchema = new mongoose.Schema(
           lastCompletedDate: { type: String, default: '' },
           order: { type: Number, default: 0 },
           repeatDaily: { type: Boolean, default: false },
+          excludedDates: { type: [String], default: [] },
+          isArchived: { type: Boolean, default: false },
         },
       ],
       thursday: [
@@ -125,6 +131,8 @@ const UserSchema = new mongoose.Schema(
           lastCompletedDate: { type: String, default: '' },
           order: { type: Number, default: 0 },
           repeatDaily: { type: Boolean, default: false },
+          excludedDates: { type: [String], default: [] },
+          isArchived: { type: Boolean, default: false },
         },
       ],
       friday: [
@@ -139,6 +147,8 @@ const UserSchema = new mongoose.Schema(
           lastCompletedDate: { type: String, default: '' },
           order: { type: Number, default: 0 },
           repeatDaily: { type: Boolean, default: false },
+          excludedDates: { type: [String], default: [] },
+          isArchived: { type: Boolean, default: false },
         },
       ],
       saturday: [
@@ -153,6 +163,8 @@ const UserSchema = new mongoose.Schema(
           lastCompletedDate: { type: String, default: '' },
           order: { type: Number, default: 0 },
           repeatDaily: { type: Boolean, default: false },
+          excludedDates: { type: [String], default: [] },
+          isArchived: { type: Boolean, default: false },
         },
       ],
       sunday: [
@@ -167,9 +179,20 @@ const UserSchema = new mongoose.Schema(
           lastCompletedDate: { type: String, default: '' },
           order: { type: Number, default: 0 },
           repeatDaily: { type: Boolean, default: false },
+          excludedDates: { type: [String], default: [] },
+          isArchived: { type: Boolean, default: false },
         },
       ],
     },
+    archivedTasks: [
+      {
+        id: { type: String, required: true },
+        name: { type: String, required: true },
+        color: { type: String, default: '#3B82F6' },
+        targetMinutes: { type: Number, default: 25 },
+        archivedAt: { type: Date, default: Date.now },
+      },
+    ],
     dailyGoalOverrides: [
       {
         subjectId: { type: String, required: true },

@@ -30,9 +30,10 @@ import {
   getNextAvailableColor,
   syncSubjectColorsAcrossTimetable,
 } from '../utils/subjectColors.js';
-import { getStudyDayKey, getStudyDayDate, formatResetTimeDisplay } from '../utils/dateUtils.js';
+import { getStudyDayKey, getStudyDayDate, formatResetTimeDisplay, getWeekdayDateStr } from '../utils/dateUtils.js';
 import { sounds } from '../audio/soundEffects.js';
 import { api } from '../services/api.js';
+import { TaskDeleteConfirmModal } from '../components/TaskDeleteConfirmModal.jsx';
 
 const WEEKDAYS = [
   { key: 'monday', label: 'Monday', short: 'Mon' },
@@ -49,6 +50,7 @@ export const WeeklyPlanPage = ({
   onNavigate,
   onStartFocusSubject,
   onTimetableUpdated,
+  onDeleteTask,
   isRestDayToday = false,
 }) => {
   const resetTime = user?.dailyResetTime || '06:00';
@@ -77,6 +79,8 @@ export const WeeklyPlanPage = ({
   // Add / Edit Modal State
   const [showModal, setShowModal] = useState(false);
   const [editingSubject, setEditingSubject] = useState(null); // null if adding
+  const [deletingSubject, setDeletingSubject] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [formName, setFormName] = useState('');
   const [formColor, setFormColor] = useState(SUBJECT_COLORS[0].hex);
   const [formDuration, setFormDuration] = useState(45);
@@ -270,16 +274,70 @@ export const WeeklyPlanPage = ({
     await persistTimetable(updatedTimetable);
   };
 
-  // Delete subject
-  const handleDelete = async (subjectId) => {
-    sounds.playClick();
-    const updatedList = currentDaySubjects.filter((s) => s.id !== subjectId);
-    const updatedTimetable = {
-      ...timetable,
-      [activeDay]: updatedList,
-    };
-    setTimetable(updatedTimetable);
-    await persistTimetable(updatedTimetable);
+  // Detect whether subject has weekly recurrence
+  const isSubjectRecurring = (subject) => {
+    if (!subject) return false;
+    if (subject.repeatDaily === true) return true;
+    const cleanName = (subject.name || '').trim().toLowerCase();
+    const subjectId = subject.id || subject._id;
+    let occurrences = 0;
+    WEEKDAYS.forEach((d) => {
+      const list = timetable[d.key] || [];
+      const found = list.find(
+        (s) =>
+          (subjectId && (s.id === subjectId || s._id?.toString() === subjectId)) ||
+          (cleanName && s.name?.trim().toLowerCase() === cleanName)
+      );
+      if (found) {
+        occurrences++;
+        if (found.repeatDaily === true) occurrences += 2;
+      }
+    });
+    return occurrences > 1;
+  };
+
+  const activeDayDateStr = getWeekdayDateStr(activeDay, new Date(), resetTime);
+
+  // Delete subject for today only (date-specific exclusion)
+  const handleDeleteToday = async () => {
+    if (!deletingSubject) return;
+    const targetId = deletingSubject.id || deletingSubject._id;
+    try {
+      setIsDeleting(true);
+      const res = onDeleteTask
+        ? await onDeleteTask(targetId, { scope: 'today', day: activeDay, dateStr: activeDayDateStr })
+        : await api.deleteTask(targetId, { scope: 'today', day: activeDay, dateStr: activeDayDateStr });
+      if (res?.timetable) {
+        setTimetable(res.timetable);
+        if (onTimetableUpdated) onTimetableUpdated(res.timetable);
+      }
+      setDeletingSubject(null);
+    } catch (err) {
+      console.error('Failed to delete subject for today:', err);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  // Delete subject permanently across all days
+  const handleDeletePermanent = async () => {
+    if (!deletingSubject) return;
+    const targetId = deletingSubject.id || deletingSubject._id;
+    try {
+      setIsDeleting(true);
+      const res = onDeleteTask
+        ? await onDeleteTask(targetId, { scope: 'permanent' })
+        : await api.deleteTask(targetId, { scope: 'permanent' });
+      if (res?.timetable) {
+        setTimetable(res.timetable);
+        if (onTimetableUpdated) onTimetableUpdated(res.timetable);
+      }
+      setDeletingSubject(null);
+    } catch (err) {
+      console.error('Failed to delete subject permanently:', err);
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   // Reorder subjects (Move up or down)
@@ -651,9 +709,12 @@ export const WeeklyPlanPage = ({
 
                   {/* Delete Button */}
                   <button
-                    onClick={() => handleDelete(subject.id)}
+                    onClick={() => {
+                      sounds.playClick();
+                      setDeletingSubject(subject);
+                    }}
                     className="p-1.5 rounded-xl text-[#8A9791] hover:text-rose-500 hover:bg-[#FAF8F5] dark:hover:bg-[#1C2E29] transition cursor-pointer"
-                    title="Remove from day"
+                    title="Delete subject"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -816,6 +877,16 @@ export const WeeklyPlanPage = ({
           </div>
         </div>
       )}
+      {/* --- SMART TASK DELETION CONFIRMATION MODAL --- */}
+      <TaskDeleteConfirmModal
+        isOpen={Boolean(deletingSubject)}
+        task={deletingSubject}
+        isRecurring={isSubjectRecurring(deletingSubject)}
+        onDeleteToday={handleDeleteToday}
+        onDeletePermanent={handleDeletePermanent}
+        onClose={() => setDeletingSubject(null)}
+        isDeleting={isDeleting}
+      />
     </div>
   );
 };

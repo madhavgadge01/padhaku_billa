@@ -19,6 +19,7 @@ import {
   Lock,
 } from 'lucide-react';
 import { sounds } from '../audio/soundEffects.js';
+import { TaskDeleteConfirmModal } from '../components/TaskDeleteConfirmModal.jsx';
 import {
   SUBJECT_COLORS,
   getSubjectColor,
@@ -63,6 +64,8 @@ export const QuestsPage = ({
 }) => {
   const [filter, setFilter] = useState('all'); // 'all' | 'active' | 'completed'
   const [showAddModal, setShowAddModal] = useState(false);
+  const [deletingTask, setDeletingTask] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [name, setName] = useState('');
   const [duration, setDuration] = useState(25);
   const [colorTag, setColorTag] = useState('');
@@ -83,6 +86,57 @@ export const QuestsPage = ({
   // Color assignments from entire weekly plan to enforce unique colors
   const effectiveTimetable = user?.weeklyTimetable || weeklyTimetable || {};
   const { subjectToColor, colorToSubject } = getSubjectColorAssignments(effectiveTimetable);
+
+  // Check whether a task has weekly recurrence (daily, multiple days, or weekly recurring)
+  const isTaskRecurring = (task) => {
+    if (!task) return false;
+    if (task.repeatDaily === true) return true;
+    const cleanName = (task.name || '').trim().toLowerCase();
+    const taskId = task.id || task._id;
+    let occurrences = 0;
+    const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+    DAYS.forEach((d) => {
+      const list = effectiveTimetable[d] || [];
+      const found = list.find(
+        (s) =>
+          (taskId && (s.id === taskId || s._id?.toString() === taskId)) ||
+          (cleanName && s.name?.trim().toLowerCase() === cleanName)
+      );
+      if (found) {
+        occurrences++;
+        if (found.repeatDaily === true) occurrences += 2;
+      }
+    });
+    return occurrences > 1;
+  };
+
+  const handleDeleteToday = async () => {
+    if (!deletingTask) return;
+    const targetId = deletingTask._id || deletingTask.id;
+    try {
+      setIsDeleting(true);
+      await onDeleteTask(targetId, { scope: 'today', day: todayKey, dateStr: todayDateStr });
+      setDeletingTask(null);
+    } catch (err) {
+      console.error('Failed to delete task for today:', err);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleDeletePermanent = async () => {
+    if (!deletingTask) return;
+    const targetId = deletingTask._id || deletingTask.id;
+    try {
+      setIsDeleting(true);
+      await onDeleteTask(targetId, { scope: 'permanent' });
+      setDeletingTask(null);
+    } catch (err) {
+      console.error('Failed to delete task permanently:', err);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   // When user opens modal, initialize default unused color and enable repeatDaily by default
   const handleOpenAddModal = () => {
@@ -471,7 +525,7 @@ export const QuestsPage = ({
                   <button
                     onClick={() => {
                       sounds.playClick();
-                      onDeleteTask(task._id || task.id);
+                      setDeletingTask(task);
                     }}
                     className="sm:hidden p-1.5 text-[#8A9791] hover:text-rose-500 rounded-xl hover:bg-[#FAF8F5] dark:hover:bg-[#1C2E29] transition cursor-pointer flex-shrink-0"
                     title="Remove from Today's Tasks"
@@ -505,7 +559,7 @@ export const QuestsPage = ({
                   <button
                     onClick={() => {
                       sounds.playClick();
-                      onDeleteTask(task._id || task.id);
+                      setDeletingTask(task);
                     }}
                     className="hidden sm:inline-flex p-2 text-[#8A9791] hover:text-rose-500 rounded-xl hover:bg-[#FAF8F5] dark:hover:bg-[#1C2E29] transition cursor-pointer"
                     title="Remove from Today's Tasks"
@@ -665,6 +719,16 @@ export const QuestsPage = ({
           </div>
         </div>
       )}
+      {/* --- SMART TASK DELETION CONFIRMATION MODAL --- */}
+      <TaskDeleteConfirmModal
+        isOpen={Boolean(deletingTask)}
+        task={deletingTask}
+        isRecurring={isTaskRecurring(deletingTask)}
+        onDeleteToday={handleDeleteToday}
+        onDeletePermanent={handleDeletePermanent}
+        onClose={() => setDeletingTask(null)}
+        isDeleting={isDeleting}
+      />
     </div>
   );
 };

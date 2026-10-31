@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Plus, Flame, Clock, CheckCircle, Circle, Trash2, Tag, ShieldAlert } from 'lucide-react';
 import { sounds } from '../audio/soundEffects.js';
+import { TaskDeleteConfirmModal } from './TaskDeleteConfirmModal.jsx';
 
 const COLOR_PRESETS = [
   { name: 'Red (DSA & Algos)', color: '#ef4444' },
@@ -21,6 +22,7 @@ export const TaskManager = ({
   globalStreak = 0,
 }) => {
   const [showAddModal, setShowAddModal] = useState(false);
+  const [deletingTask, setDeletingTask] = useState(null);
   const [taskName, setTaskName] = useState('');
   const [duration, setDuration] = useState(25);
   const [selectedColor, setSelectedColor] = useState(COLOR_PRESETS[0].color);
@@ -182,7 +184,7 @@ export const TaskManager = ({
                     onClick={(e) => {
                       e.stopPropagation();
                       sounds.playClick();
-                      onDeleteTask(task._id);
+                      setDeletingTask(task);
                     }}
                     className="text-slate-500 hover:text-rose-400 transition p-1 hover:bg-slate-700 rounded-lg cursor-pointer"
                     title="Delete Task"
@@ -281,6 +283,25 @@ export const TaskManager = ({
           </div>
         </div>
       )}
+      {/* Smart Task Deletion Confirmation Modal */}
+      <TaskDeleteConfirmModal
+        isOpen={Boolean(deletingTask)}
+        task={deletingTask}
+        isRecurring={Boolean(deletingTask?.repeatDaily)}
+        onDeleteToday={() => {
+          if (deletingTask) {
+            onDeleteTask(deletingTask._id || deletingTask.id, { scope: 'today' });
+            setDeletingTask(null);
+          }
+        }}
+        onDeletePermanent={() => {
+          if (deletingTask) {
+            onDeleteTask(deletingTask._id || deletingTask.id, { scope: 'permanent' });
+            setDeletingTask(null);
+          }
+        }}
+        onClose={() => setDeletingTask(null)}
+      />
     </div>
   );
 };

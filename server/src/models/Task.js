@@ -40,6 +40,14 @@ const TaskSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    excludedDates: {
+      type: [String],
+      default: [],
+    },
+    isArchived: {
+      type: Boolean,
+      default: false,
+    },
     totalSessions: {
       type: Number,
       default: 0,

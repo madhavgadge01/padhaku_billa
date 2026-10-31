@@ -213,10 +213,13 @@ export function App() {
   };
 
   // Task Deletion
-  const handleDeleteTask = async (taskId) => {
+  const handleDeleteTask = async (taskId, options = {}) => {
     try {
-      const res = await api.deleteTask(taskId);
+      const res = await api.deleteTask(taskId, options);
       if (res.success) {
+        if (res.timetable) {
+          setUser((prev) => (prev ? { ...prev, weeklyTimetable: res.timetable } : prev));
+        }
         await loadUserData();
       }
       return res;
@@ -527,6 +530,7 @@ export function App() {
                 navigateTo('focus');
               }}
               onTimetableUpdated={handleTimetableUpdated}
+              onDeleteTask={handleDeleteTask}
               isRestDayToday={restDayActive}
             />
           )}

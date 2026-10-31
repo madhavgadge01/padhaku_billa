@@ -8,6 +8,7 @@ import {
   getStudyDayDate,
   getStudyDayOfWeek,
   getStudyDayKey,
+  getWeekdayDateStr,
   isRestDayForUser,
   checkAndRefreshStreaks,
   calculateSubjectStreak,
@@ -39,7 +40,7 @@ const getTzOffset = (req) =>
  * - If a subject's color is modified, it synchronizes across all days.
  * - No two different subjects share the same color.
  */
-const normalizeWeeklyTimetable = (timetable = {}) => {
+const normalizeWeeklyTimetable = (timetable = {}, existingWeeklyTimetable = {}) => {
   const subjectToColor = {};
   const usedColors = new Set();
   const normalized = {};
@@ -72,12 +73,51 @@ const normalizeWeeklyTimetable = (timetable = {}) => {
       const lower = cleanName.toLowerCase();
       const color = subjectToColor[lower] || PALETTE[0];
 
+      let existingMatch = null;
+      if (existingWeeklyTimetable && existingWeeklyTimetable[day]) {
+        existingMatch = existingWeeklyTimetable[day].find(
+          (s) => s.id === item.id || s.name?.trim().toLowerCase() === lower
+        );
+      }
+
+      const excludedDates = Array.isArray(item.excludedDates)
+        ? item.excludedDates
+        : Array.isArray(existingMatch?.excludedDates)
+        ? existingMatch.excludedDates
+        : [];
+
+      const repeatDaily = typeof item.repeatDaily === 'boolean'
+        ? item.repeatDaily
+        : typeof existingMatch?.repeatDaily === 'boolean'
+        ? existingMatch.repeatDaily
+        : false;
+
+      const isArchived = typeof item.isArchived === 'boolean'
+        ? item.isArchived
+        : typeof existingMatch?.isArchived === 'boolean'
+        ? existingMatch.isArchived
+        : false;
+
       return {
         id: item.id || `sub_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`,
         name: cleanName,
         color,
         targetMinutes: Math.max(5, Math.min(360, Number(item.targetMinutes) || 25)),
-        completedDates: Array.isArray(item.completedDates) ? item.completedDates : [],
+        completedDates: Array.isArray(item.completedDates)
+          ? item.completedDates
+          : Array.isArray(existingMatch?.completedDates)
+          ? existingMatch.completedDates
+          : [],
+        excludedDates,
+        repeatDaily,
+        isArchived,
+        currentStreak: typeof item.currentStreak === 'number'
+          ? item.currentStreak
+          : existingMatch?.currentStreak || 0,
+        bestStreak: typeof item.bestStreak === 'number'
+          ? item.bestStreak
+          : existingMatch?.bestStreak || 0,
+        lastCompletedDate: item.lastCompletedDate || existingMatch?.lastCompletedDate || '',
         order: typeof item.order === 'number' ? item.order : idx,
       };
     });
@@ -100,7 +140,10 @@ router.get('/', requireAuth, async (req, res) => {
     // Refresh streak integrity
     await checkAndRefreshStreaks(req.user, tzOffset);
 
-    const timetableToday = req.user.weeklyTimetable?.[todayWeekday] || [];
+    const rawTimetableToday = req.user.weeklyTimetable?.[todayWeekday] || [];
+    const timetableToday = rawTimetableToday.filter(
+      (t) => !t.isArchived && (!Array.isArray(t.excludedDates) || !t.excludedDates.includes(todayStr))
+    );
     let tasks = [];
 
     if (timetableToday.length > 0) {
@@ -119,7 +162,8 @@ router.get('/', requireAuth, async (req, res) => {
       }));
     } else {
       // Fallback to legacy task collection if user has never configured weekly plan
-      const legacyTasks = await Task.find({ userId: req.user._id }).sort({ createdAt: -1 });
+      const legacyTasks = (await Task.find({ userId: req.user._id, isArchived: { $ne: true } }).sort({ createdAt: -1 }))
+        .filter((t) => !Array.isArray(t.excludedDates) || !t.excludedDates.includes(todayStr));
       tasks = legacyTasks.map((t) => ({
         _id: t._id,
         id: t._id,
@@ -409,7 +453,7 @@ router.put('/:id', requireAuth, async (req, res) => {
 });
 
 // =========================================================================
-// 4. DELETE TASK FROM TODAY'S PLAN
+// 4. DELETE TASK (TODAY ONLY VS PERMANENTLY)
 // =========================================================================
 router.delete('/:id', requireAuth, async (req, res) => {
   try {
@@ -418,37 +462,130 @@ router.delete('/:id', requireAuth, async (req, res) => {
     const tzOffset = getTzOffset(req);
     const resetTime = user.dailyResetTime || '06:00';
     const todayWeekday = getStudyDayKey(new Date(), resetTime, tzOffset);
-    const dayOnly = req.query.dayOnly === 'true';
+    const todayStr = getStudyDayDate(new Date(), resetTime, tzOffset);
 
-    let deleted = false;
+    // scope can be 'today' or 'permanent'. Backward compat: query.dayOnly === 'true' means 'today'
+    const scope = req.query.scope || req.body?.scope || (req.query.dayOnly === 'true' ? 'today' : 'permanent');
+    const targetWeekday = req.query.day || req.body?.day || todayWeekday;
+    const targetDateStr = req.query.dateStr || req.body?.dateStr || (targetWeekday === todayWeekday ? todayStr : getWeekdayDateStr(targetWeekday, new Date(), resetTime, tzOffset));
 
-    if (dayOnly && user.weeklyTimetable?.[todayWeekday]) {
-      const initialLen = user.weeklyTimetable[todayWeekday].length;
-      user.weeklyTimetable[todayWeekday] = user.weeklyTimetable[todayWeekday].filter(
-        (s) => s.id !== targetId && s._id?.toString() !== targetId
-      );
-      if (user.weeklyTimetable[todayWeekday].length < initialLen) deleted = true;
-    } else {
-      // Remove matching subject by ID across all days
-      DAYS.forEach((d) => {
-        if (Array.isArray(user.weeklyTimetable?.[d])) {
-          const len = user.weeklyTimetable[d].length;
-          user.weeklyTimetable[d] = user.weeklyTimetable[d].filter(
-            (s) => s.id !== targetId && s._id?.toString() !== targetId
-          );
-          if (user.weeklyTimetable[d].length < len) deleted = true;
-        }
-      });
+    if (!user.weeklyTimetable) {
+      user.weeklyTimetable = { monday: [], tuesday: [], wednesday: [], thursday: [], friday: [], saturday: [], sunday: [] };
     }
 
-    // Fallback to legacy Task collection
-    if (mongoose.isValidObjectId(targetId)) {
-      await Task.findOneAndDelete({ _id: targetId, userId: user._id });
+    // Identify normalized subject name if exists
+    let targetSubjectName = '';
+    DAYS.forEach((d) => {
+      (user.weeklyTimetable[d] || []).forEach((s) => {
+        if (s.id === targetId || s._id?.toString() === targetId) {
+          targetSubjectName = s.name.trim().toLowerCase();
+        }
+      });
+    });
+
+    if (scope === 'today') {
+      // Option 1: "Delete for Today"
+      // Date-specific exclusion/skip mechanism rather than deleting the original recurring task
+      DAYS.forEach((d) => {
+        (user.weeklyTimetable[d] || []).forEach((s) => {
+          const isMatch = s.id === targetId || s._id?.toString() === targetId || (targetSubjectName && s.name.trim().toLowerCase() === targetSubjectName);
+          if (isMatch) {
+            if (!Array.isArray(s.excludedDates)) {
+              s.excludedDates = [];
+            }
+            if (!s.excludedDates.includes(targetDateStr)) {
+              s.excludedDates.push(targetDateStr);
+            }
+          }
+        });
+      });
+
+      // Legacy Task fallback handling
+      if (mongoose.isValidObjectId(targetId)) {
+        const legTask = await Task.findOne({ _id: targetId, userId: user._id });
+        if (legTask) {
+          if (!Array.isArray(legTask.excludedDates)) legTask.excludedDates = [];
+          if (!legTask.excludedDates.includes(targetDateStr)) {
+            legTask.excludedDates.push(targetDateStr);
+            await legTask.save();
+          }
+        }
+      }
+    } else {
+      // Option 2: "Delete Permanently"
+      // Disable or archive recurring task so it no longer generates future scheduled occurrences
+      let archivedInfo = null;
+      DAYS.forEach((d) => {
+        if (Array.isArray(user.weeklyTimetable[d])) {
+          user.weeklyTimetable[d] = user.weeklyTimetable[d].filter((s) => {
+            const isMatch = s.id === targetId || s._id?.toString() === targetId || (targetSubjectName && s.name.trim().toLowerCase() === targetSubjectName);
+            if (isMatch && !archivedInfo) {
+              archivedInfo = {
+                id: s.id,
+                name: s.name,
+                color: s.color,
+                targetMinutes: s.targetMinutes,
+                archivedAt: new Date(),
+              };
+            }
+            return !isMatch;
+          });
+        }
+      });
+
+      if (archivedInfo) {
+        if (!Array.isArray(user.archivedTasks)) user.archivedTasks = [];
+        if (!user.archivedTasks.some((a) => a.id === archivedInfo.id)) {
+          user.archivedTasks.push(archivedInfo);
+        }
+      }
+
+      // Legacy Task collection handling
+      if (mongoose.isValidObjectId(targetId)) {
+        await Task.findOneAndUpdate(
+          { _id: targetId, userId: user._id },
+          { isArchived: true },
+          { new: true }
+        );
+      }
     }
 
     user.markModified('weeklyTimetable');
+    user.markModified('archivedTasks');
     await user.save();
-    return res.json({ success: true, message: 'Quest removed.', timetable: user.weeklyTimetable });
+
+    // Recheck streak status for today
+    await updateGlobalStreakIfEligible(user, tzOffset);
+
+    // Build enriched timetable reflecting current study week
+    const enrichedTimetable = {};
+    DAYS.forEach((d) => {
+      const dayDate = getWeekdayDateStr(d, new Date(), resetTime, tzOffset);
+      enrichedTimetable[d] = (user.weeklyTimetable[d] || [])
+        .filter((sub) => {
+          if (sub.isArchived) return false;
+          if (Array.isArray(sub.excludedDates) && sub.excludedDates.includes(dayDate)) {
+            return false;
+          }
+          return true;
+        })
+        .map((sub) => {
+          const itemObj = sub.toObject ? sub.toObject() : { ...sub };
+          return {
+            ...itemObj,
+            completedToday: Array.isArray(itemObj.completedDates) && itemObj.completedDates.includes(todayStr),
+          };
+        });
+    });
+
+    return res.json({
+      success: true,
+      message: scope === 'today' ? 'Quest removed from schedule for today.' : 'Quest permanently deleted from all scheduled days.',
+      scope,
+      timetable: enrichedTimetable,
+      rawTimetable: user.weeklyTimetable,
+      streaks: user.streaks,
+    });
   } catch (error) {
     console.error('[Task Error] Delete:', error);
     return res.status(500).json({ success: false, message: 'Failed to delete quest.' });
@@ -720,13 +857,22 @@ router.get('/timetable/weekly', requireAuth, async (req, res) => {
     // Enrich each weekday's subjects with completedToday flag
     const enrichedTimetable = {};
     DAYS.forEach((d) => {
-      enrichedTimetable[d] = (timetable[d] || []).map((sub) => {
-        const itemObj = sub.toObject ? sub.toObject() : { ...sub };
-        return {
-          ...itemObj,
-          completedToday: Array.isArray(itemObj.completedDates) && itemObj.completedDates.includes(todayStr),
-        };
-      });
+      const dayDateStr = getWeekdayDateStr(d, new Date(), resetTime, tzOffset);
+      enrichedTimetable[d] = (timetable[d] || [])
+        .filter((sub) => {
+          if (sub.isArchived) return false;
+          if (Array.isArray(sub.excludedDates) && sub.excludedDates.includes(dayDateStr)) {
+            return false;
+          }
+          return true;
+        })
+        .map((sub) => {
+          const itemObj = sub.toObject ? sub.toObject() : { ...sub };
+          return {
+            ...itemObj,
+            completedToday: Array.isArray(itemObj.completedDates) && itemObj.completedDates.includes(todayStr),
+          };
+        });
     });
 
     const todayList = enrichedTimetable[todayKey] || [];
@@ -770,21 +916,67 @@ router.put('/timetable/weekly', requireAuth, async (req, res) => {
     }
 
     const user = req.user;
-    // Normalize and enforce unique subject colors
-    const normalized = normalizeWeeklyTimetable(incomingTimetable);
+    const tzOffset = getTzOffset(req);
+    const resetTime = user.dailyResetTime || '06:00';
+    const todayStr = getStudyDayDate(new Date(), resetTime, tzOffset);
+
+    // Normalize and enforce unique subject colors, preserving excludedDates, repeatDaily, etc.
+    const normalized = normalizeWeeklyTimetable(incomingTimetable, user.weeklyTimetable);
+
+    // If an existing subject was excluded for a specific date in the current week,
+    // preserve it in normalized so it doesn't get permanently lost
+    DAYS.forEach((d) => {
+      const dayDateStr = getWeekdayDateStr(d, new Date(), resetTime, tzOffset);
+      (user.weeklyTimetable?.[d] || []).forEach((oldSub) => {
+        if (
+          !oldSub.isArchived &&
+          Array.isArray(oldSub.excludedDates) &&
+          oldSub.excludedDates.includes(dayDateStr)
+        ) {
+          const exists = (normalized[d] || []).some(
+            (s) => s.id === oldSub.id || s.name?.trim().toLowerCase() === oldSub.name?.trim().toLowerCase()
+          );
+          if (!exists) {
+            normalized[d].push(oldSub);
+          }
+        }
+      });
+    });
+
     user.weeklyTimetable = normalized;
     user.hasConfiguredTimetable = Boolean(hasConfiguredTimetable);
 
     await user.save();
 
     // Check if updating timetable changes today's completion state
-    const tzOffset = getTzOffset(req);
     await updateGlobalStreakIfEligible(user, tzOffset);
+
+    // Enrich timetable for response
+    const enrichedTimetable = {};
+    DAYS.forEach((d) => {
+      const dayDateStr = getWeekdayDateStr(d, new Date(), resetTime, tzOffset);
+      enrichedTimetable[d] = (user.weeklyTimetable[d] || [])
+        .filter((sub) => {
+          if (sub.isArchived) return false;
+          if (Array.isArray(sub.excludedDates) && sub.excludedDates.includes(dayDateStr)) {
+            return false;
+          }
+          return true;
+        })
+        .map((sub) => {
+          const itemObj = sub.toObject ? sub.toObject() : { ...sub };
+          return {
+            ...itemObj,
+            completedToday: Array.isArray(itemObj.completedDates) && itemObj.completedDates.includes(todayStr),
+          };
+        });
+    });
 
     return res.json({
       success: true,
       message: 'Weekly study plan updated successfully!',
-      timetable: user.weeklyTimetable,
+      timetable: enrichedTimetable,
+      rawTimetable: user.weeklyTimetable,
       hasConfiguredTimetable: user.hasConfiguredTimetable,
       streaks: user.streaks,
     });

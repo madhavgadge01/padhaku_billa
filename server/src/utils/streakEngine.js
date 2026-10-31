@@ -277,7 +277,10 @@ export const checkAndRefreshStreaks = async (user, clientTimezoneOffset = null) 
   }
 
   // 2. Unified Tasks from Weekly Timetable for Today's Study Day
-  const timetableToday = user.weeklyTimetable?.[todayKey] || [];
+  const rawTimetableToday = user.weeklyTimetable?.[todayKey] || [];
+  const timetableToday = rawTimetableToday.filter(
+    (t) => !t.isArchived && (!Array.isArray(t.excludedDates) || !t.excludedDates.includes(todayStr))
+  );
   let tasks = [];
 
   if (timetableToday.length > 0) {
@@ -302,7 +305,10 @@ export const checkAndRefreshStreaks = async (user, clientTimezoneOffset = null) 
     });
   } else {
     // Fallback to legacy task collection if user has not yet configured weekly timetable
-    const dbTasks = await Task.find({ userId: user._id });
+    const rawDbTasks = await Task.find({ userId: user._id, isArchived: { $ne: true } });
+    const dbTasks = rawDbTasks.filter(
+      (t) => !Array.isArray(t.excludedDates) || !t.excludedDates.includes(todayStr)
+    );
     if (dbTasks.length > 0) {
       tasks = dbTasks.map((t) => {
         const historyDates = (t.history || []).filter((h) => h.completed).map((h) => h.date);
@@ -404,7 +410,10 @@ export const updateGlobalStreakIfEligible = async (user, clientTimezoneOffset = 
   const todayStr = getStudyDayDate(new Date(), resetTime, clientTimezoneOffset);
   const todayKey = getStudyDayKey(new Date(), resetTime, clientTimezoneOffset);
 
-  const timetableToday = user.weeklyTimetable?.[todayKey] || [];
+  const rawTimetableToday = user.weeklyTimetable?.[todayKey] || [];
+  const timetableToday = rawTimetableToday.filter(
+    (t) => !t.isArchived && (!Array.isArray(t.excludedDates) || !t.excludedDates.includes(todayStr))
+  );
   let isAllDone = false;
   let totalScheduled = 0;
 
@@ -415,7 +424,10 @@ export const updateGlobalStreakIfEligible = async (user, clientTimezoneOffset = 
     );
   } else {
     // Fallback to legacy task collection
-    const legacyTasks = await Task.find({ userId: user._id });
+    const rawLegacyTasks = await Task.find({ userId: user._id, isArchived: { $ne: true } });
+    const legacyTasks = rawLegacyTasks.filter(
+      (t) => !Array.isArray(t.excludedDates) || !t.excludedDates.includes(todayStr)
+    );
     if (legacyTasks.length > 0) {
       totalScheduled = legacyTasks.length;
       isAllDone = legacyTasks.every((t) => t.completedToday || t.lastCompletedDate === todayStr);
@@ -586,12 +598,18 @@ export const rollbackStreakIfUncompleted = async (user, clientTimezoneOffset = n
   const todayStr = getStudyDayDate(new Date(), resetTime, clientTimezoneOffset);
   const todayKey = getStudyDayKey(new Date(), resetTime, clientTimezoneOffset);
 
-  const timetableToday = user.weeklyTimetable?.[todayKey] || [];
+  const rawTimetableToday = user.weeklyTimetable?.[todayKey] || [];
+  const timetableToday = rawTimetableToday.filter(
+    (t) => !t.isArchived && (!Array.isArray(t.excludedDates) || !t.excludedDates.includes(todayStr))
+  );
   let allDone = false;
   if (timetableToday.length > 0) {
     allDone = timetableToday.every((t) => Array.isArray(t.completedDates) && t.completedDates.includes(todayStr));
   } else {
-    const legacyTasks = await Task.find({ userId: user._id });
+    const rawLegacyTasks = await Task.find({ userId: user._id, isArchived: { $ne: true } });
+    const legacyTasks = rawLegacyTasks.filter(
+      (t) => !Array.isArray(t.excludedDates) || !t.excludedDates.includes(todayStr)
+    );
     if (legacyTasks.length > 0) {
       allDone = legacyTasks.every((t) => t.completedToday || t.lastCompletedDate === todayStr);
     }
