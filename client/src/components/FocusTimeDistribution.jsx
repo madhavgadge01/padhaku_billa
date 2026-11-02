@@ -511,11 +511,113 @@ export const FocusTimeDistribution = ({
     return `${monLabel} – ${sunLabel}`;
   }, [currentWeekRange]);
 
+  // 24 Hour ticks around the circular clock
+  const hourTicks = useMemo(() => {
+    const ticks = [];
+    for (let h = 0; h < 24; h++) {
+      // 00:00 (12 AM / Midnight) is at -90 degrees (top / 12 o'clock)
+      const angle = -90 + h * 15;
+      const isMajor = h % 6 === 0; // 0, 6, 12, 18
+      const isQuarter = h % 3 === 0 && !isMajor; // 3, 9, 15, 21
+
+      let labelText = null;
+      if (h % 3 === 0) {
+        if (h === 0) labelText = '12 AM';
+        else if (h < 12) labelText = `${h} AM`;
+        else if (h === 12) labelText = '12 PM';
+        else labelText = `${h - 12} PM`;
+      }
+
+      ticks.push({
+        hour: h,
+        angle,
+        isMajor,
+        isQuarter,
+        labelText,
+      });
+    }
+    return ticks;
+  }, []);
+
+  // Day clock data: sessions mapped to real 24-hour dial angles (-90° to 270°)
+  const dayClockData = useMemo(() => {
+    const daySessions = normalizedSessions.filter((s) => s.dateStr === selectedDayStr);
+    const totalM = daySessions.reduce((acc, s) => acc + s.minutes, 0);
+
+    const segments = daySessions.map((sess, idx) => {
+      let startMin = 0;
+      let endMin = 0;
+      const mins = Number(sess.minutes) || 1;
+
+      if (sess.startTime) {
+        const sDate = new Date(sess.startTime);
+        if (!isNaN(sDate.getTime())) {
+          startMin = sDate.getHours() * 60 + sDate.getMinutes() + sDate.getSeconds() / 60;
+        }
+      }
+
+      if (sess.endTime) {
+        const eDate = new Date(sess.endTime);
+        if (!isNaN(eDate.getTime())) {
+          endMin = eDate.getHours() * 60 + eDate.getMinutes() + eDate.getSeconds() / 60;
+        }
+      }
+
+      if (!endMin || endMin <= startMin) {
+        endMin = startMin + mins;
+      }
+
+      // Convert minutes from midnight (0..1440) to degrees on 24-hr clock
+      // 00:00 (12 AM) is at -90 degrees (top / 12 o'clock)
+      let startAngle = -90 + (startMin / 1440) * 360;
+      let endAngle = -90 + (endMin / 1440) * 360;
+
+      // Ensure minimum visible arc (at least 2.5 degrees so even short sessions are easily visible)
+      if (endAngle - startAngle < 2.5) {
+        endAngle = startAngle + 2.5;
+      }
+
+      const startTimeStr = formatSessionTime(sess.startTime);
+      const endTimeStr = formatSessionTime(
+        sess.endTime || new Date(new Date(sess.startTime).getTime() + mins * 60000)
+      );
+
+      const subjectSessions = daySessions.filter(
+        (s) => s.name.toLowerCase() === sess.name.toLowerCase()
+      );
+      const subjectTotalMins = subjectSessions.reduce((acc, s) => acc + s.minutes, 0);
+
+      return {
+        ...sess,
+        id: sess.id || `day_seg_${idx}`,
+        name: sess.name,
+        activityName: sess.activityDescription || sess.taskName || sess.name,
+        color: sess.color,
+        minutes: mins,
+        totalMinutes: subjectTotalMins,
+        startTimeStr,
+        endTimeStr,
+        startAngle,
+        endAngle,
+        sessions: subjectSessions,
+      };
+    });
+
+    return {
+      segments,
+      totalMinutes: totalM,
+    };
+  }, [normalizedSessions, selectedDayStr]);
+
   // Currently selected segment object
   const selectedSegment = useMemo(() => {
     if (!selectedSegmentId) return null;
+    if (mode === 'day') {
+      const found = dayClockData.segments.find((s) => s.id === selectedSegmentId);
+      if (found) return found;
+    }
     return donutSegments.find((s) => s.id === selectedSegmentId) || null;
-  }, [selectedSegmentId, donutSegments]);
+  }, [selectedSegmentId, mode, dayClockData.segments, donutSegments]);
 
   // Close detail panel when clicking outside the component
   useEffect(() => {
@@ -659,14 +761,14 @@ export const FocusTimeDistribution = ({
         </div>
       </div>
 
-      {/* Main Content: Interactive Circular Donut Chart */}
-      {donutSegments.length === 0 ? (
+      {/* Main Content: 24-Hour Circular Clock (Day mode) or Circular Donut Chart (Week mode) */}
+      {mode === 'week' && donutSegments.length === 0 ? (
         <div className="py-14 text-center rounded-3xl bg-stone-50 dark:bg-[#182420]/50 border border-emerald-950/5 dark:border-white/5 p-6 space-y-2">
           <div className="w-12 h-12 rounded-2xl bg-white dark:bg-[#121A17] text-2xl flex items-center justify-center mx-auto shadow-xs">
             ☕
           </div>
           <div className="text-sm font-black text-[#0D1F17] dark:text-white">
-            No focus sessions recorded for this {mode}.
+            No focus sessions recorded for this week.
           </div>
           <p className="text-xs text-stone-400 max-w-sm mx-auto">
             Both Deep Focus sessions and saved Stopwatch sessions will automatically appear in this circular chart.
@@ -674,50 +776,99 @@ export const FocusTimeDistribution = ({
         </div>
       ) : (
         <div className="space-y-6">
-          {/* Donut Chart Presentation Container */}
-          <div className="flex flex-col items-center justify-center pt-2 pb-2">
-            <div className="relative w-64 h-64 sm:w-72 sm:h-72 flex items-center justify-center">
-              <svg
-                viewBox="0 0 320 320"
-                className="w-full h-full transform -rotate-90 select-none overflow-visible"
-              >
-                <defs>
-                  {/* Subtle drop shadow filter for hovered / selected segment */}
-                  <filter id="donutSegmentGlow" x="-20%" y="-20%" width="140%" height="140%">
-                    <feDropShadow dx="0" dy="2" stdDeviation="4" floodOpacity="0.3" />
-                  </filter>
-                </defs>
+          {mode === 'day' ? (
+            /* Circular 24-Hour Clock Container */
+            <div className="flex flex-col items-center justify-center pt-6 pb-8 relative">
+              <div className="relative w-full max-w-[340px] sm:max-w-[400px] aspect-square flex items-center justify-center">
+                <svg
+                  viewBox="0 0 340 340"
+                  className="w-full h-full select-none overflow-visible"
+                >
+                  <defs>
+                    {/* Subtle inner shadow for the track to make it look embedded */}
+                    <filter id="trackInsetShadow" x="-20%" y="-20%" width="140%" height="140%">
+                      <feOffset dx="0" dy="1"/>
+                      <feGaussianBlur stdDeviation="2" result="offset-blur"/>
+                      <feComposite operator="out" in="SourceGraphic" in2="offset-blur" result="inverse"/>
+                      <feFlood floodColor="black" floodOpacity="0.1" result="color"/>
+                      <feComposite operator="in" in="color" in2="inverse" result="shadow"/>
+                      <feComposite operator="over" in="shadow" in2="SourceGraphic"/>
+                    </filter>
+                  </defs>
 
-                {/* Background Ring Track */}
-                <circle
-                  cx="160"
-                  cy="160"
-                  r="105"
-                  fill="none"
-                  stroke="currentColor"
-                  className="text-stone-100 dark:text-[#182420]"
-                  strokeWidth="24"
-                />
+                  {/* Outer Ring Ambient Track (Slimmer and cleaner) */}
+                  <circle
+                    cx="170"
+                    cy="170"
+                    r="130"
+                    fill="none"
+                    stroke="currentColor"
+                    className="text-stone-100 dark:text-stone-800/40"
+                    strokeWidth="24"
+                    filter="url(#trackInsetShadow)"
+                  />
 
-                {/* Donut Segments */}
-                {donutSegments.map((seg) => {
-                  const isSelected = selectedSegmentId === seg.id;
-                  const isHovered = hoveredSegmentId === seg.id;
-                  const strokeW = isSelected ? 32 : isHovered ? 28 : 24;
+                  {/* 24 Hour Radial Tick Marks (Minimalist) */}
+                  {hourTicks.map((tick) => (
+                    <line
+                      key={`tick_${tick.hour}`}
+                      // Adjusting coordinate math inline for new center/radius
+                      x1={170 + 118 * Math.cos(tick.angle * Math.PI / 180)}
+                      y1={170 + 118 * Math.sin(tick.angle * Math.PI / 180)}
+                      x2={170 + 142 * Math.cos(tick.angle * Math.PI / 180)}
+                      y2={170 + 142 * Math.sin(tick.angle * Math.PI / 180)}
+                      stroke="currentColor"
+                      className={
+                        tick.isMajor
+                          ? 'text-stone-300 dark:text-stone-600'
+                          : tick.isQuarter
+                          ? 'text-stone-200 dark:text-stone-700/60'
+                          : 'text-stone-100 dark:text-stone-800/30'
+                      }
+                      strokeWidth={tick.isMajor ? 2 : tick.isQuarter ? 1.5 : 1}
+                    />
+                  ))}
 
-                  if (seg.isSingle) {
+                  {/* 24 Hour Circular Text Labels */}
+                  {hourTicks
+                    .filter((t) => t.labelText)
+                    .map((t) => (
+                      <text
+                        key={`label_${t.hour}`}
+                        x={170 + 160 * Math.cos(t.angle * Math.PI / 180)}
+                        y={170 + 160 * Math.sin(t.angle * Math.PI / 180)}
+                        textAnchor="middle"
+                        dominantBaseline="central"
+                        className="fill-stone-400 dark:fill-stone-500 text-[9px] sm:text-[10px] font-bold font-mono uppercase tracking-widest"
+                      >
+                        {t.labelText}
+                      </text>
+                    ))}
+
+                  {/* Active Session Colored Arcs */}
+                  {dayClockData.segments.map((seg) => {
+                    const isSelected = selectedSegmentId === seg.id;
+                    const isHovered = hoveredSegmentId === seg.id;
+                    const isSameSubject = selectedSegment && selectedSegment.name.toLowerCase() === seg.name.toLowerCase();
+                    
+                    // Clean hover sizes - not too thick, just right
+                    const strokeW = isSelected ? 32 : isHovered ? 28 : isSameSubject ? 26 : 24;
+
+                    const pathData = describeArc(170, 170, 130, seg.startAngle, seg.endAngle);
+
                     return (
-                      <circle
+                      <path
                         key={seg.id}
-                        cx="160"
-                        cy="160"
-                        r="105"
+                        d={pathData}
                         fill="none"
                         stroke={seg.color}
                         strokeWidth={strokeW}
-                        className="cursor-pointer transition-all duration-300 ease-out"
+                        strokeLinecap="butt"
+                        className="cursor-pointer transition-all duration-200 ease-in-out origin-center"
                         style={{
-                          filter: isSelected || isHovered ? 'url(#donutSegmentGlow)' : 'none',
+                          opacity: selectedSegmentId && !isSameSubject ? 0.2 : (isSelected || isHovered ? 1 : 0.9),
+                          transform: (isSelected || isHovered) ? 'scale(1.02)' : 'scale(1)',
+                          transformOrigin: '170px 170px'
                         }}
                         onMouseEnter={() => setHoveredSegmentId(seg.id)}
                         onMouseLeave={() => setHoveredSegmentId(null)}
@@ -725,52 +876,137 @@ export const FocusTimeDistribution = ({
                           sounds.playClick();
                           setSelectedSegmentId((prev) => (prev === seg.id ? null : seg.id));
                         }}
-                      />
+                      >
+                        <title>{`${seg.activityName} (${seg.startTimeStr} – ${seg.endTimeStr}): ${formatMinutes(seg.minutes)}`}</title>
+                      </path>
                     );
-                  }
+                  })}
+                </svg>
 
-                  const pathData = describeArc(160, 160, 105, seg.startAngle, seg.endAngle);
-
-                  return (
-                    <path
-                      key={seg.id}
-                      d={pathData}
-                      fill="none"
-                      stroke={seg.color}
-                      strokeWidth={strokeW}
-                      strokeLinecap="round"
-                      className="cursor-pointer transition-all duration-300 ease-out"
-                      style={{
-                        filter: isSelected || isHovered ? 'url(#donutSegmentGlow)' : 'none',
-                        transformOrigin: '160px 160px',
-                      }}
-                      onMouseEnter={() => setHoveredSegmentId(seg.id)}
-                      onMouseLeave={() => setHoveredSegmentId(null)}
-                      onClick={() => {
-                        sounds.playClick();
-                        setSelectedSegmentId((prev) => (prev === seg.id ? null : seg.id));
-                      }}
-                    >
-                      <title>{`${seg.activityName}: ${formatMinutes(seg.totalMinutes)} (${seg.percentage}%)`}</title>
-                    </path>
-                  );
-                })}
-              </svg>
-
-              {/* Inside Donut Center: TODAY / THIS WEEK & Total Focus Time */}
-              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-center px-4">
-                <span className="text-[11px] font-black uppercase tracking-widest text-[#576560] dark:text-[#8BA398]">
-                  {mode === 'day' ? 'TODAY' : 'THIS WEEK'}
-                </span>
-                <span className="text-[11px] font-bold text-[#8A9791] mt-0.5">
-                  {mode === 'day' ? 'Total Focus Time' : 'Total Weekly Focus Time'}
-                </span>
-                <span className="text-2xl sm:text-3xl font-black font-mono tracking-tight text-[#1C2A24] dark:text-[#F2F7F4] mt-1">
-                  {formatDonutCenterTime(totalMinutes)}
-                </span>
+                {/* Inside Clock Center: Display Day & Total Focus Time */}
+                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-center px-6">
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-stone-400 mb-1">
+                    {formattedDayLabel}
+                  </span>
+                  
+                  <span className="text-3xl sm:text-4xl font-black font-sans tracking-tight text-[#0D1F17] dark:text-white my-1">
+                    {formatDonutCenterTime(dayClockData.totalMinutes)}
+                  </span>
+                  
+                  <div className="flex items-center space-x-1.5 mt-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#10B981]" />
+                    <span className="text-[10px] font-semibold text-stone-500">
+                      {dayClockData.segments.length}{' '}
+                      {dayClockData.segments.length === 1 ? 'Session' : 'Sessions'}
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
+          ) : (
+            /* Week Mode Donut Presentation Container */
+            <div className="flex flex-col items-center justify-center pt-6 pb-8 relative">
+              <div className="relative w-full max-w-[340px] sm:max-w-[400px] aspect-square flex items-center justify-center">
+                <svg
+                  viewBox="0 0 340 340"
+                  className="w-full h-full transform -rotate-90 select-none overflow-visible"
+                >
+                  <circle
+                    cx="170"
+                    cy="170"
+                    r="130"
+                    fill="none"
+                    stroke="currentColor"
+                    className="text-stone-100 dark:text-[#182420]"
+                    strokeWidth="24"
+                  />
+
+                  {donutSegments.map((seg) => {
+                    const isSelected = selectedSegmentId === seg.id;
+                    const isHovered = hoveredSegmentId === seg.id;
+                    const isSameSubject = selectedSegment && selectedSegment.name.toLowerCase() === seg.name.toLowerCase();
+                    const strokeW = isSelected ? 32 : isHovered ? 28 : isSameSubject ? 26 : 24;
+
+                    if (seg.isSingle) {
+                      return (
+                        <circle
+                          key={seg.id}
+                          cx="170"
+                          cy="170"
+                          r="130"
+                          fill="none"
+                          stroke={seg.color}
+                          strokeWidth={strokeW}
+                          className="cursor-pointer transition-all duration-200 ease-in-out origin-center"
+                          style={{
+                            opacity: selectedSegmentId && !isSameSubject ? 0.2 : (isSelected || isHovered ? 1 : 0.9),
+                            transform: (isSelected || isHovered) ? 'scale(1.02)' : 'scale(1)',
+                            transformOrigin: '170px 170px'
+                          }}
+                          onMouseEnter={() => setHoveredSegmentId(seg.id)}
+                          onMouseLeave={() => setHoveredSegmentId(null)}
+                          onClick={() => {
+                            sounds.playClick();
+                            setSelectedSegmentId((prev) => (prev === seg.id ? null : seg.id));
+                          }}
+                        />
+                      );
+                    }
+
+                    const pathData = describeArc(170, 170, 130, seg.startAngle, seg.endAngle);
+
+                    return (
+                      <path
+                        key={seg.id}
+                        d={pathData}
+                        fill="none"
+                        stroke={seg.color}
+                        strokeWidth={strokeW}
+                        strokeLinecap="round"
+                        className="cursor-pointer transition-all duration-200 ease-in-out origin-center"
+                        style={{
+                          opacity: selectedSegmentId && !isSameSubject ? 0.2 : (isSelected || isHovered ? 1 : 0.9),
+                          transform: (isSelected || isHovered) ? 'scale(1.02)' : 'scale(1)',
+                          transformOrigin: '170px 170px',
+                        }}
+                        onMouseEnter={() => setHoveredSegmentId(seg.id)}
+                        onMouseLeave={() => setHoveredSegmentId(null)}
+                        onClick={() => {
+                          sounds.playClick();
+                          setSelectedSegmentId((prev) => (prev === seg.id ? null : seg.id));
+                        }}
+                      >
+                        <title>{`${seg.activityName}: ${formatMinutes(seg.totalMinutes)} (${seg.percentage}%)`}</title>
+                      </path>
+                    );
+                  })}
+                </svg>
+
+                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-center px-6">
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-stone-400 mb-1">
+                    THIS WEEK
+                  </span>
+                  <span className="text-3xl sm:text-4xl font-black font-sans tracking-tight text-[#0D1F17] dark:text-white my-1">
+                    {formatDonutCenterTime(totalMinutes)}
+                  </span>
+                  <div className="flex items-center space-x-1.5 mt-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#10B981]" />
+                    <span className="text-[10px] font-semibold text-stone-500">
+                      {activeCount}{' '}
+                      {activeCount === 1 ? 'Session' : 'Sessions'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Empty sessions message for day mode if 0 sessions */}
+          {mode === 'day' && dayClockData.segments.length === 0 && (
+            <p className="text-center text-xs text-stone-400 max-w-sm mx-auto py-1">
+              No focus sessions recorded for this day yet. Completed Deep Focus and Stopwatch sessions will appear on this 24-hour clock.
+            </p>
+          )}
 
           {/* 3. CLICKABLE SEGMENT DETAIL PANEL: Information ONLY about the selected segment */}
           {selectedSegment ? (
@@ -890,7 +1126,9 @@ export const FocusTimeDistribution = ({
             /* Prompt to click segment and quick activity overview */
             <div className="space-y-3">
               <div className="text-center text-xs text-stone-500 dark:text-stone-400 font-medium py-1">
-                👆 Click any segment on the donut chart to view its individual session timestamps and records.
+                {mode === 'day'
+                  ? '👆 Click any session arc on the 24-hour clock to view its timestamps and details.'
+                  : '👆 Click any segment on the donut chart to view its individual session timestamps and records.'}
               </div>
 
               {/* Activity Chips Overview */}
@@ -900,9 +1138,11 @@ export const FocusTimeDistribution = ({
                     key={act.name}
                     onClick={() => {
                       sounds.playClick();
-                      const targetSeg = donutSegments.find((s) => s.name === act.name);
+                      const targetSeg = (mode === 'day' ? dayClockData.segments : donutSegments).find(
+                        (s) => s.name.toLowerCase() === act.name.toLowerCase()
+                      );
                       if (targetSeg) {
-                        setSelectedSegmentId(targetSeg.id);
+                        setSelectedSegmentId((prev) => (prev === targetSeg.id ? null : targetSeg.id));
                       }
                     }}
                     className="inline-flex items-center space-x-2 px-3 py-1.5 rounded-full bg-stone-100 hover:bg-stone-200/80 dark:bg-[#182420] dark:hover:bg-[#22352f] border border-stone-200/60 dark:border-white/10 transition cursor-pointer text-xs"
