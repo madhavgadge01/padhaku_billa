@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Clock, CheckCircle2, Trash2, X, Sparkles, Tag, BookOpen, AlertCircle } from 'lucide-react';
 import { sounds } from '../audio/soundEffects.js';
 import { FocusActionConfirmModal } from './FocusActionConfirmModal.jsx';
@@ -111,8 +112,8 @@ export const StopwatchSaveModal = ({
     setShowDiscardConfirm(true);
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-fadeIn">
+  const modalNode = (
+    <div className="fixed inset-0 z-[100000] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-fadeIn">
       <div
         className="w-full max-w-lg rounded-3xl bg-white dark:bg-[#121A17] border border-emerald-950/10 dark:border-white/10 shadow-2xl p-6 sm:p-7 space-y-5 relative text-[#0D1F17] dark:text-white"
         onClick={(e) => e.stopPropagation()}
@@ -303,5 +304,7 @@ export const StopwatchSaveModal = ({
       />
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(modalNode, document.body) : modalNode;
 };
 

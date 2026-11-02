@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import confetti from 'canvas-confetti';
+import { createPortal } from 'react-dom';
 import {
   Play,
   Pause,
@@ -16,8 +17,11 @@ import {
   Bell,
   BellOff,
   RotateCcw,
+  SkipForward,
   AlertCircle,
   X,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import { PetDisplay2D } from '../components/Sparky3DScene.jsx';
 import { StopwatchSaveModal } from '../components/StopwatchSaveModal.jsx';
@@ -60,7 +64,7 @@ export const formatTimerHMS = (totalSeconds) => {
   const h = String(Math.floor(totalSecs / 3600)).padStart(2, '0');
   const m = String(Math.floor((totalSecs % 3600) / 60)).padStart(2, '0');
   const s = String(totalSecs % 60).padStart(2, '0');
-  return `${h} H : ${m} M : ${s} S`;
+  return `${h} : ${m} : ${s}`;
 };
 
 export const formatMMSS = (totalSeconds) => {
@@ -174,6 +178,160 @@ export const FocusPage = ({
   // 2. Verified focus time in the current resume-to-break interval (Threshold: 25 mins = 1500s)
   const [intervalSeconds, setIntervalSeconds] = useState(0);
 
+  // Focus style: 'continuous' vs 'pomodoro'
+  const [focusStyle, setFocusStyle] = useState(() => {
+    try {
+      return localStorage.getItem('padhaku_focus_style') || 'pomodoro';
+    } catch (e) {
+      return 'pomodoro';
+    }
+  });
+
+  // Pomodoro Interval Settings
+  const [pomodoroFocusMins, setPomodoroFocusMins] = useState(() => {
+    try {
+      const v = parseInt(localStorage.getItem('padhaku_pomo_focus_mins'), 10);
+      return v > 0 ? v : 25;
+    } catch (e) {
+      return 25;
+    }
+  });
+  const [pomodoroBreakMins, setPomodoroBreakMins] = useState(() => {
+    try {
+      const v = parseInt(localStorage.getItem('padhaku_pomo_break_mins'), 10);
+      return v > 0 ? v : 5;
+    } catch (e) {
+      return 5;
+    }
+  });
+
+  // Pomodoro active phase: 'focus' | 'break'
+  const [pomodoroPhase, setPomodoroPhase] = useState('focus');
+  const [phaseTimeLeft, setPhaseTimeLeft] = useState(25 * 60);
+  const [phaseTotalSeconds, setPhaseTotalSeconds] = useState(25 * 60);
+
+  // Pomodoro continuous-alarm flow:
+  // null | { phase: 'focus' | 'break', stage: 'ringing' | 'choice' }
+  const [pomodoroAlert, setPomodoroAlert] = useState(null);
+
+  // Fullscreen Zen Mode (Always On Display with 5s ambient dimming)
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isDimmed, setIsDimmed] = useState(false);
+  const inactivityTimerRef = useRef(null);
+  const hasActiveModalRef = useRef(false);
+
+  const resetInactivity = useCallback(() => {
+    setIsDimmed(false);
+    if (inactivityTimerRef.current) {
+      clearTimeout(inactivityTimerRef.current);
+      inactivityTimerRef.current = null;
+    }
+    // Only schedule ambient dimming if no modal/popup is actively open
+    inactivityTimerRef.current = setTimeout(() => {
+      if (!hasActiveModalRef.current) {
+        setIsDimmed(true);
+      }
+    }, 5000);
+  }, []);
+
+  const handleEnterFullscreen = async () => {
+    sounds.playClick?.();
+    setIsFullscreen(true);
+    setIsDimmed(false);
+    resetInactivity();
+    try {
+      if (document.documentElement.requestFullscreen && !document.fullscreenElement) {
+        await document.documentElement.requestFullscreen();
+      }
+    } catch (e) {}
+  };
+
+  const handleExitFullscreen = async () => {
+    sounds.playClick?.();
+    setIsFullscreen(false);
+    setIsDimmed(false);
+    if (inactivityTimerRef.current) {
+      clearTimeout(inactivityTimerRef.current);
+      inactivityTimerRef.current = null;
+    }
+    try {
+      if (document.fullscreenElement && document.exitFullscreen) {
+        await document.exitFullscreen();
+      }
+    } catch (e) {}
+  };
+
+  // Listen to native browser fullscreen change (e.g. user presses Esc)
+  useEffect(() => {
+    const handleFsChange = () => {
+      if (!document.fullscreenElement && isFullscreen) {
+        setIsFullscreen(false);
+        setIsDimmed(false);
+        if (inactivityTimerRef.current) {
+          clearTimeout(inactivityTimerRef.current);
+          inactivityTimerRef.current = null;
+        }
+      }
+    };
+    document.addEventListener('fullscreenchange', handleFsChange);
+    return () => document.removeEventListener('fullscreenchange', handleFsChange);
+  }, [isFullscreen]);
+
+  // Inactivity tracking when isFullscreen is true (dims after 5s)
+  useEffect(() => {
+    if (!isFullscreen) return;
+
+    const handleUserActivity = () => {
+      resetInactivity();
+    };
+
+    resetInactivity();
+
+    window.addEventListener('mousemove', handleUserActivity);
+    window.addEventListener('mousedown', handleUserActivity);
+    window.addEventListener('touchstart', handleUserActivity);
+    window.addEventListener('keydown', handleUserActivity);
+
+    return () => {
+      if (inactivityTimerRef.current) {
+        clearTimeout(inactivityTimerRef.current);
+        inactivityTimerRef.current = null;
+      }
+      window.removeEventListener('mousemove', handleUserActivity);
+      window.removeEventListener('mousedown', handleUserActivity);
+      window.removeEventListener('touchstart', handleUserActivity);
+      window.removeEventListener('keydown', handleUserActivity);
+    };
+  }, [isFullscreen, resetInactivity]);
+
+  // Lock body & html scroll when isFullscreen is true to remove scrollbar & prevent background page peeking
+  useEffect(() => {
+    if (isFullscreen) {
+      const origBodyOverflow = document.body.style.overflow;
+      const origHtmlOverflow = document.documentElement.style.overflow;
+      const origBodyOverscroll = document.body.style.overscrollBehavior;
+      const origHtmlOverscroll = document.documentElement.style.overscrollBehavior;
+      const origBodyScrollbar = document.body.style.scrollbarWidth;
+      const origHtmlScrollbar = document.documentElement.style.scrollbarWidth;
+
+      document.body.style.overflow = 'hidden';
+      document.documentElement.style.overflow = 'hidden';
+      document.body.style.overscrollBehavior = 'none';
+      document.documentElement.style.overscrollBehavior = 'none';
+      document.body.style.scrollbarWidth = 'none';
+      document.documentElement.style.scrollbarWidth = 'none';
+
+      return () => {
+        document.body.style.overflow = origBodyOverflow;
+        document.documentElement.style.overflow = origHtmlOverflow;
+        document.body.style.overscrollBehavior = origBodyOverscroll;
+        document.documentElement.style.overscrollBehavior = origHtmlOverscroll;
+        document.body.style.scrollbarWidth = origBodyScrollbar;
+        document.documentElement.style.scrollbarWidth = origHtmlScrollbar;
+      };
+    }
+  }, [isFullscreen]);
+
   // Inline Timer Editing State
   const [activeEditField, setActiveEditField] = useState(null); // 'h', 'm', 's' or null
   const [inputValue, setInputValue] = useState('');
@@ -207,6 +365,26 @@ export const FocusPage = ({
     icon: Square,
     onConfirm: () => {},
   });
+
+  // Keep Fullscreen illuminated and undimmed while any modal or alert is active
+  hasActiveModalRef.current = !!(
+    showCountdownModal ||
+    showBreakConfirmation ||
+    pomodoroAlert ||
+    confirmModalState?.isOpen ||
+    showStopwatchModal ||
+    isAlarmPlaying
+  );
+
+  useEffect(() => {
+    if (showCountdownModal || showBreakConfirmation || pomodoroAlert || confirmModalState?.isOpen || showStopwatchModal || isAlarmPlaying) {
+      setIsDimmed(false);
+      if (inactivityTimerRef.current) {
+        clearTimeout(inactivityTimerRef.current);
+        inactivityTimerRef.current = null;
+      }
+    }
+  }, [showCountdownModal, showBreakConfirmation, pomodoroAlert, confirmModalState?.isOpen, showStopwatchModal, isAlarmPlaying]);
 
   // Push Notification state
   const [pushStatus, setPushStatus] = useState({
@@ -242,6 +420,39 @@ export const FocusPage = ({
   const stopwatchSessionStartTimeRef = useRef(null);
   const stopwatchIntervalRef = useRef(null);
   const subjectMenuRef = useRef(null);
+
+  // Pomodoro refs
+  const focusStyleRef = useRef(focusStyle);
+  const pomodoroPhaseRef = useRef(pomodoroPhase);
+  const pomodoroFocusMinsRef = useRef(pomodoroFocusMins);
+  const pomodoroBreakMinsRef = useRef(pomodoroBreakMins);
+  const phaseEndTimestampRef = useRef(null);
+  const pomoAlertActiveRef = useRef(false);
+  const executePauseSessionRef = useRef(null);
+  const executeResumeSessionRef = useRef(null);
+
+  useEffect(() => {
+    focusStyleRef.current = focusStyle;
+  }, [focusStyle]);
+
+  useEffect(() => {
+    pomodoroPhaseRef.current = pomodoroPhase;
+  }, [pomodoroPhase]);
+
+  useEffect(() => {
+    pomodoroFocusMinsRef.current = pomodoroFocusMins;
+  }, [pomodoroFocusMins]);
+
+  useEffect(() => {
+    pomodoroBreakMinsRef.current = pomodoroBreakMins;
+  }, [pomodoroBreakMins]);
+
+  // Stop alarm if component unmounts
+  useEffect(() => {
+    return () => {
+      if (pomoAlertActiveRef.current) sounds.stopAlarm?.();
+    };
+  }, []);
 
   // Keep refs in sync with state
   useEffect(() => {
@@ -333,6 +544,10 @@ export const FocusPage = ({
     if (isRunning && !isPaused) {
       const timeStr = hDisplay > 0 ? formatTimerHMS(timeLeft) : formatMMSS(timeLeft);
       document.title = `🍃 ${timeStr} | Padhaku Billa`;
+    } else if (pomodoroAlert) {
+      document.title = pomodoroAlert.phase === 'focus'
+        ? '⏰ Focus Complete! | Padhaku Billa'
+        : '⏰ Break Over! | Padhaku Billa';
     } else if (isAlarmPlaying || completionData) {
       document.title = `⏰ 00:00 | Session Complete! | Padhaku Billa`;
     } else if (isPaused) {
@@ -1105,6 +1320,13 @@ export const FocusPage = ({
         baseIntervalSeconds: baseIntervalRef.current,
         isRunning: isRunningRef.current,
         isPaused: isPausedRef.current,
+        focusStyle: focusStyleRef.current,
+        pomodoroPhase: pomodoroPhaseRef.current,
+        phaseTimeLeft,
+        phaseTotalSeconds,
+        phaseEndTimestamp: phaseEndTimestampRef.current,
+        pomodoroFocusMins: pomodoroFocusMinsRef.current,
+        pomodoroBreakMins: pomodoroBreakMinsRef.current,
         pauseCount,
         timeLeft,
         updatedAt: Date.now(),
@@ -1116,7 +1338,7 @@ export const FocusPage = ({
       console.warn('Could not save timer to localStorage', e);
       return null;
     }
-  }, [selectedSubject, activeTask, customSubjectName, selectedColor, timerMode, pauseCount, timeLeft]);
+  }, [selectedSubject, activeTask, customSubjectName, selectedColor, timerMode, pauseCount, timeLeft, phaseTimeLeft, phaseTotalSeconds]);
 
   // Clear timer state from localStorage
   const clearTimerStorage = useCallback(() => {
@@ -1145,6 +1367,27 @@ export const FocusPage = ({
   const recalculateFromTimestamps = useCallback(() => {
     if (!isRunningRef.current || isPausedRef.current) return;
     const now = Date.now();
+
+    // 1. Pomodoro Break Mode
+    if (focusStyleRef.current === 'pomodoro' && pomodoroPhaseRef.current === 'break') {
+      const pEndTs = phaseEndTimestampRef.current;
+      if (!pEndTs) return;
+      const phaseRemaining = Math.max(0, Math.ceil((pEndTs - now) / 1000));
+      setPhaseTimeLeft(phaseRemaining);
+
+      if (phaseRemaining === 0 && !pomoAlertActiveRef.current) {
+        pomoAlertActiveRef.current = true;
+        isRunningRef.current = false;
+        isPausedRef.current = true;
+        setIsRunning(false);
+        setIsPaused(true);
+        sounds.startAlarm?.();
+        setPomodoroAlert({ phase: 'break', stage: 'ringing' });
+      }
+      return;
+    }
+
+    // 2. Study Session (Continuous or Pomodoro Focus)
     const endTs = sessionEndTimestampRef.current;
     if (!endTs) return;
 
@@ -1163,6 +1406,30 @@ export const FocusPage = ({
     const currentInterval = (baseIntervalRef.current || 0) + segmentElapsed;
     intervalElapsedRef.current = currentInterval;
     setIntervalSeconds(currentInterval);
+
+    // If in Pomodoro Focus phase, check interval completion
+    if (focusStyleRef.current === 'pomodoro' && pomodoroPhaseRef.current === 'focus') {
+      const pEndTs = phaseEndTimestampRef.current;
+      if (pEndTs) {
+        const phaseRemaining = Math.max(0, Math.ceil((pEndTs - now) / 1000));
+        setPhaseTimeLeft(phaseRemaining);
+
+        if (phaseRemaining === 0 && remaining > 0 && !pomoAlertActiveRef.current) {
+          pomoAlertActiveRef.current = true;
+          if (executePauseSessionRef.current) {
+            executePauseSessionRef.current(false);
+          } else {
+            isRunningRef.current = false;
+            isPausedRef.current = true;
+            setIsRunning(false);
+            setIsPaused(true);
+          }
+          sounds.startAlarm?.();
+          setPomodoroAlert({ phase: 'focus', stage: 'ringing' });
+          return;
+        }
+      }
+    }
 
     if (remaining === 0 && !isCompletingRef.current) {
       if (handleCompleteRef.current) {
@@ -1616,6 +1883,16 @@ export const FocusPage = ({
       isPausedRef.current = false;
       setIsRunning(true);
       setIsPaused(false);
+      if (timerMode === 'focus' && focusStyleRef.current === 'pomodoro') {
+        setPomodoroPhase('focus');
+        pomodoroPhaseRef.current = 'focus';
+        const pomoIntervalSecs = (pomodoroFocusMinsRef.current || 25) * 60;
+        const initialPhaseSecs = Math.min(targetDurationSecs, pomoIntervalSecs);
+        setPhaseTotalSeconds(initialPhaseSecs);
+        setPhaseTimeLeft(initialPhaseSecs);
+        phaseEndTimestampRef.current = now + initialPhaseSecs * 1000;
+      }
+
       setPetFocusState(timerMode === 'focus' ? 'studying' : 'happy');
       sounds.playTimerStart();
 
@@ -1704,6 +1981,14 @@ export const FocusPage = ({
       isPausedRef.current = false;
       setIsRunning(true);
       setIsPaused(false);
+      if (focusStyleRef.current === 'pomodoro' && pomodoroPhaseRef.current === 'focus') {
+        const pRem = phaseTimeLeft > 0 ? phaseTimeLeft : (pomodoroFocusMinsRef.current || 25) * 60;
+        const boundedP = Math.min(remainingSecs, pRem);
+        setPhaseTotalSeconds((pomodoroFocusMinsRef.current || 25) * 60);
+        setPhaseTimeLeft(boundedP);
+        phaseEndTimestampRef.current = now + boundedP * 1000;
+      }
+
       setPetFocusState(timerMode === 'focus' ? 'studying' : 'happy');
       sounds.playTimerStart();
 
@@ -1733,6 +2018,7 @@ export const FocusPage = ({
       console.error('Failed to resume session:', err);
     }
   };
+  useEffect(() => { executeResumeSessionRef.current = executeResumeSession; });
 
   // 6. User clicks Break / Pause button
   const handleBreakButtonClick = () => {
@@ -1778,6 +2064,12 @@ export const FocusPage = ({
       setAccumulatedSeconds(currentTotal);
       intervalElapsedRef.current = currentInterval;
       setIntervalSeconds(currentInterval);
+
+      if (phaseEndTimestampRef.current) {
+        const pRem = Math.max(0, Math.ceil((phaseEndTimestampRef.current - now) / 1000));
+        setPhaseTimeLeft(pRem);
+        phaseEndTimestampRef.current = null;
+      }
 
       const currentRemaining = sessionEndTimestampRef.current
         ? Math.max(0, Math.ceil((sessionEndTimestampRef.current - now) / 1000))
@@ -1839,6 +2131,7 @@ export const FocusPage = ({
       console.error('Failed to pause session:', err);
     }
   };
+  useEffect(() => { executePauseSessionRef.current = executePauseSession; });
 
   // Cancel / Stop Session
   const handleReset = () => {
@@ -1869,6 +2162,15 @@ export const FocusPage = ({
     intervalElapsedRef.current = 0;
     setIntervalSeconds(0);
     userHasCustomizedDurationRef.current = false;
+    setPomodoroAlert(null);
+    pomoAlertActiveRef.current = false;
+    setPomodoroPhase('focus');
+    pomodoroPhaseRef.current = 'focus';
+    const resetPomoSecs = (pomodoroFocusMinsRef.current || 25) * 60;
+    setPhaseTotalSeconds(resetPomoSecs);
+    setPhaseTimeLeft(resetPomoSecs);
+    phaseEndTimestampRef.current = null;
+
     const resetDuration = totalSeconds > 0 ? totalSeconds : (customMinutesRef.current || 25) * 60;
     setTimeLeft(resetDuration);
     setPauseCount(0);
@@ -1899,6 +2201,138 @@ export const FocusPage = ({
     } else {
       handleReset();
     }
+  };
+
+  // ==========================================
+  // POMODORO CONTINUOUS ALARM & PHASE FLOW
+  // ==========================================
+  const startPomodoroPhase = (phase, secs) => {
+    sounds.stopAlarm?.();
+    setPomodoroAlert(null);
+    pomoAlertActiveRef.current = false;
+
+    setPomodoroPhase(phase);
+    pomodoroPhaseRef.current = phase;
+    setPhaseTotalSeconds(secs);
+    setPhaseTimeLeft(secs);
+
+    const now = Date.now();
+    phaseEndTimestampRef.current = now + secs * 1000;
+
+    if (phase === 'focus') {
+      const remainingSecs = timeLeft > 0 ? timeLeft : (totalSecondsRef.current || 1500);
+      sessionEndTimestampRef.current = now + remainingSecs * 1000;
+      activeSegmentStartRef.current = now;
+      baseIntervalRef.current = 0;
+      intervalElapsedRef.current = 0;
+      setIntervalSeconds(0);
+
+      isRunningRef.current = true;
+      isPausedRef.current = false;
+      setIsRunning(true);
+      setIsPaused(false);
+      setPetFocusState('studying');
+      sounds.playTimerStart?.();
+
+      const currId = sessionIdRef.current || sessionId;
+      if (currId) {
+        api.resumeSession(currId).catch(() => {});
+      }
+
+      syncTimerToStorage({
+        isRunning: true,
+        isPaused: false,
+        sessionEndTimestamp: sessionEndTimestampRef.current,
+        activeSegmentStartTimestamp: now,
+        timeLeft: remainingSecs,
+        pomodoroPhase: 'focus',
+        phaseTimeLeft: secs,
+        phaseTotalSeconds: secs,
+        phaseEndTimestamp: phaseEndTimestampRef.current,
+      });
+
+      broadcastTimerEvent('TIMER_RESUME', {
+        sessionId: currId,
+        sessionEndTimestamp: sessionEndTimestampRef.current,
+        timeLeft: remainingSecs,
+      });
+    } else if (phase === 'break') {
+      // Break countdown: study session remains paused/frozen so timeLeft does NOT deplete
+      sessionEndTimestampRef.current = null;
+      activeSegmentStartRef.current = null;
+      isRunningRef.current = true;
+      isPausedRef.current = false;
+      setIsRunning(true);
+      setIsPaused(false);
+      setPetFocusState('happy');
+      sounds.playTimerStart?.();
+
+      syncTimerToStorage({
+        isRunning: true,
+        isPaused: false,
+        sessionEndTimestamp: null,
+        activeSegmentStartTimestamp: null,
+        pomodoroPhase: 'break',
+        phaseTimeLeft: secs,
+        phaseTotalSeconds: secs,
+        phaseEndTimestamp: phaseEndTimestampRef.current,
+      });
+
+      broadcastTimerEvent('TIMER_BREAK_START', {
+        pomodoroPhase: 'break',
+        phaseTimeLeft: secs,
+      });
+    }
+  };
+
+  const handleSkipBreak = () => {
+    sounds.playClick?.();
+    startPomodoroPhase('focus', Math.min(timeLeft, (pomodoroFocusMins || 25) * 60));
+  };
+
+  const handleStopPomodoroAlarm = () => {
+    sounds.stopAlarm?.();
+    setPomodoroAlert((prev) => (prev ? { ...prev, stage: 'choice' } : prev));
+  };
+
+  const handlePomodoroChoice = (choice) => {
+    sounds.stopAlarm?.();
+    setPomodoroAlert(null);
+    pomoAlertActiveRef.current = false;
+
+    if (choice === 'break') {
+      startPomodoroPhase('break', (pomodoroBreakMins || 5) * 60);
+    } else if (choice === 'focus') {
+      startPomodoroPhase('focus', Math.min(timeLeft, (pomodoroFocusMins || 25) * 60));
+    } else if (choice === 'extraFocus') {
+      startPomodoroPhase('focus', Math.min(timeLeft, 5 * 60));
+    } else if (choice === 'extraBreak') {
+      startPomodoroPhase('break', 5 * 60);
+    }
+  };
+
+  const formatExpectedTime = (date) => {
+    if (!date) return '';
+    return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
+  };
+
+  const getExpectedCompletionDate = () => {
+    const now = Date.now();
+    const remainingSeconds = timeLeft > 0 ? timeLeft : 0;
+    if (focusStyle === 'pomodoro') {
+      const singleFocusSecs = (pomodoroFocusMins || 25) * 60;
+      const singleBreakSecs = (pomodoroBreakMins || 5) * 60;
+      const neededBreaks =
+        singleFocusSecs > 0 && remainingSeconds > 0
+          ? Math.max(0, Math.ceil(remainingSeconds / singleFocusSecs) - 1)
+          : 0;
+      const currentPhaseRemainingToAdd =
+        pomodoroPhase === 'break' ? (phaseTimeLeft > 0 ? phaseTimeLeft : singleBreakSecs) : 0;
+      return new Date(
+        now + (remainingSeconds + neededBreaks * singleBreakSecs + currentPhaseRemainingToAdd) * 1000
+      );
+    }
+    return new Date(now + remainingSeconds * 1000);
   };
 
   // Explicit Stop Alarm action
@@ -2107,7 +2541,7 @@ export const FocusPage = ({
   const EditableSegment = ({ field, label, value, activeField, inputVal, onFocus, onChange, onSubmit, colon }) => {
     const isEditing = activeField === field;
     return (
-      <div className="flex items-center">
+      <div className="flex items-center flex-shrink-0">
         <div
           className={`flex items-baseline ${!isRunning && !isPaused ? 'cursor-pointer hover:opacity-80 transition' : ''}`}
           onClick={() => onFocus(field, value)}
@@ -2116,7 +2550,7 @@ export const FocusPage = ({
             <input
               type="text"
               autoFocus
-              className="w-20 sm:w-28 bg-[#E8F7F0] dark:bg-[#182420] rounded-2xl text-center border-2 border-[#10B981] dark:border-[#34D399] outline-none text-[#0D1F17] dark:text-[#34D399] p-1 font-mono font-black"
+              className="w-12 sm:w-16 bg-[#E8F7F0] dark:bg-[#182420] rounded-xl text-center border-2 border-[#10B981] dark:border-[#34D399] outline-none text-[#0D1F17] dark:text-[#34D399] py-0.5 px-1 font-mono font-black text-inherit"
               value={inputVal}
               onChange={onChange}
               onBlur={() => onSubmit(field)}
@@ -2127,11 +2561,15 @@ export const FocusPage = ({
               {String(value).padStart(2, '0')}
             </span>
           )}
-          <span className="ml-1 sm:ml-1.5 text-xs sm:text-sm font-black text-[#10B981] dark:text-[#34D399] tracking-widest uppercase">
+          <span className="ml-0.5 sm:ml-1 text-[10px] sm:text-xs font-black text-[#10B981] dark:text-[#34D399] tracking-wider uppercase select-none">
             {label}
           </span>
         </div>
-        {colon && <span className="mx-1 sm:mx-2.5 text-3xl sm:text-5xl font-black font-mono text-emerald-950/20 dark:text-emerald-500/30 select-none -mt-2 sm:-mt-3">:</span>}
+        {colon && (
+          <span className="mx-1 sm:mx-1.5 text-lg sm:text-2xl font-black font-mono text-emerald-950/25 dark:text-emerald-500/35 select-none -translate-y-0.5">
+            :
+          </span>
+        )}
       </div>
     );
   };
@@ -2170,9 +2608,478 @@ export const FocusPage = ({
   const swM = String(Math.floor((stopwatchSeconds % 3600) / 60)).padStart(2, '0');
   const swS = String(stopwatchSeconds % 60).padStart(2, '0');
 
+  // ==========================================
+  // DUAL RING SVG GEOMETRY AND DRAG LOGIC (ViewBox: 0 0 340 340)
+  // ==========================================
+  const svgCenter = 170;
+  const outerRadius = 150;
+  const innerRadius = 130;
+  const outerCircumference = 2 * Math.PI * outerRadius;
+  const innerCircumference = 2 * Math.PI * innerRadius;
+
+  const [dragMinutes, setDragMinutes] = useState(pomodoroFocusMins);
+  const [dragFloatRatio, setDragFloatRatio] = useState(null);
+  const svgRef = useRef(null);
+  const [isDragging, setIsDragging] = useState(false);
+
+  useEffect(() => {
+    if (!isDragging) {
+      setDragMinutes(pomodoroFocusMins);
+      setDragFloatRatio(null);
+    }
+  }, [pomodoroFocusMins, isDragging]);
+
+  const activePomoMins = isDragging ? dragMinutes : pomodoroFocusMins;
+  const innerRingTotalSecs = activePomoMins * 60;
+
+  // Outer ring progress (depletes as time decreases toward total task goal)
+  const outerProgressRatio = totalSeconds > 0 ? Math.max(0, timeLeft / totalSeconds) : 0;
+  const outerStrokeDashoffset = outerCircumference * (1 - outerProgressRatio);
+
+  // Inner ring arc ratio and progress
+  const innerArcRatio = totalSeconds > 0 ? Math.min(1, innerRingTotalSecs / totalSeconds) : 1;
+  const maxInnerArcLength = innerCircumference * innerArcRatio;
+
+  const isPomodoroFocusPhase = focusStyle === 'pomodoro' && pomodoroPhase === 'focus';
+  const innerRingLeftSecs = isPomodoroFocusPhase
+    ? phaseTimeLeft
+    : pomodoroPhase === 'break'
+    ? phaseTimeLeft
+    : innerRingTotalSecs;
+  const innerProgressRatio = innerRingTotalSecs > 0 ? Math.max(0, innerRingLeftSecs / innerRingTotalSecs) : 0;
+
+  // While dragging, use raw continuous float ratio for 60fps liquid smooth movement without jumping
+  const currentFraction = (isDragging && dragFloatRatio !== null)
+    ? dragFloatRatio
+    : (innerArcRatio * (isPomodoroFocusPhase || pomodoroPhase === 'break' ? innerProgressRatio : 1));
+
+  const activeInnerArcLength = innerCircumference * currentFraction;
+
+  // Knob Angle Calculation (always firmly anchored on innerRadius = 130)
+  const innerKnobAngle = currentFraction * 2 * Math.PI;
+  const knobX = svgCenter + innerRadius * Math.cos(innerKnobAngle);
+  const knobY = svgCenter + innerRadius * Math.sin(innerKnobAngle);
+
+  // Pointer Handlers for Dragging
+  const updateMinutesFromPointer = useCallback((e) => {
+    if (!svgRef.current) return;
+    const rect = svgRef.current.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+
+    const dx = e.clientX - cx;
+    const dy = e.clientY - cy;
+
+    // Clockwise angle from 12 o'clock (0 to 2*PI)
+    let angle = Math.atan2(dy, dx) + Math.PI / 2;
+    if (angle < 0) angle += 2 * Math.PI;
+
+    const rawRatio = Math.max(0, Math.min(1, angle / (2 * Math.PI)));
+    const targetMins = totalSeconds > 0 ? Math.floor(totalSeconds / 60) : 120;
+
+    let newMins = Math.round(rawRatio * targetMins);
+    if (newMins < 0) newMins = 0;
+    if (newMins > targetMins) newMins = targetMins;
+
+    setDragFloatRatio(rawRatio);
+    setDragMinutes(newMins);
+  }, [totalSeconds]);
+
+  const handleSvgPointerDown = (e) => {
+    if (isRunning || isPaused || timerMode === 'stopwatch' || focusStyle !== 'pomodoro') return;
+    setIsDragging(true);
+    updateMinutesFromPointer(e);
+  };
+
+  const handlePointerMove = useCallback((e) => {
+    if (!isDragging) return;
+    updateMinutesFromPointer(e);
+  }, [isDragging, updateMinutesFromPointer]);
+
+  const handlePointerUp = useCallback(() => {
+    if (isDragging) {
+      setIsDragging(false);
+      setDragFloatRatio(null);
+      sounds.playClick?.();
+
+      if (dragMinutes <= 0) {
+        setFocusStyle('continuous');
+        try { localStorage.setItem('padhaku_focus_style', 'continuous'); } catch (err) {}
+      } else {
+        setFocusStyle('pomodoro');
+        setPomodoroFocusMins(dragMinutes);
+        setPhaseTotalSeconds(dragMinutes * 60);
+        setPhaseTimeLeft(dragMinutes * 60);
+        try {
+          localStorage.setItem('padhaku_focus_style', 'pomodoro');
+          localStorage.setItem('padhaku_pomo_focus_mins', String(dragMinutes));
+        } catch (err) {}
+      }
+    }
+  }, [isDragging, dragMinutes]);
+
+  useEffect(() => {
+    if (isDragging) {
+      document.addEventListener('pointermove', handlePointerMove);
+      document.addEventListener('pointerup', handlePointerUp);
+    } else {
+      document.removeEventListener('pointermove', handlePointerMove);
+      document.removeEventListener('pointerup', handlePointerUp);
+    }
+    return () => {
+      document.removeEventListener('pointermove', handlePointerMove);
+      document.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [isDragging, handlePointerMove, handlePointerUp]);
+
   return (
     <div className="max-w-5xl mx-auto space-y-6 pb-12 select-none">
-      {/* Repeating Continuous Alarm Banner */}
+      {/* -------------------------------------------------------------
+          FULLSCREEN ZEN MODE OVERLAY (Always On Display with 5s Ambient Dim)
+          Mounted directly to document.body via Portal to prevent any underlying page scroll/peek
+          ------------------------------------------------------------- */}
+      {isFullscreen && typeof document !== 'undefined' && createPortal(
+        <div
+          onClick={resetInactivity}
+          className={`fixed inset-0 top-0 left-0 right-0 bottom-0 w-full h-full min-h-[100dvh] max-h-[100dvh] z-[99999] transition-colors duration-1000 flex flex-col items-center justify-between p-6 sm:p-10 select-none overflow-hidden touch-none overscroll-none ${
+            isDimmed ? 'bg-black text-stone-500 cursor-none' : 'bg-[#060F0B] text-white'
+          }`}
+          style={{ margin: 0, position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, width: '100%', height: '100%', minHeight: '100dvh', maxHeight: '100dvh', zIndex: 99999 }}
+        >
+          {/* Top Bar: Subject Badge + Exit Fullscreen Button */}
+          <div
+            className={`w-full max-w-3xl flex items-center justify-between transition-opacity duration-700 ${
+              isDimmed ? 'opacity-0 pointer-events-none' : 'opacity-100'
+            }`}
+          >
+            <div className="flex items-center space-x-3 bg-white/10 px-4 py-2 rounded-full backdrop-blur-md">
+              <span
+                className="w-3.5 h-3.5 rounded-full shadow-xs"
+                style={{ backgroundColor: activeColorInfo.hex }}
+              />
+              <span className="text-sm font-black text-white/90 truncate tracking-tight">
+                {activeSubjectName}
+              </span>
+            </div>
+
+            <button
+              onClick={handleExitFullscreen}
+              className="p-3 rounded-full bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-all cursor-pointer backdrop-blur-md"
+              title="Exit Fullscreen (Esc)"
+              aria-label="Exit Fullscreen"
+            >
+              <Minimize2 className="w-5 h-5" />
+            </button>
+          </div>
+
+          {/* Center: The Dial & Timer (Always On Display Ambient Dim after 5s) */}
+          <div
+            className={`flex flex-col items-center justify-center my-auto transition-all duration-1000 ${
+              isDimmed
+                ? 'opacity-30 scale-95 filter brightness-75'
+                : 'opacity-100 scale-100 sm:scale-110 filter brightness-100'
+            }`}
+          >
+            {timerMode === 'stopwatch' ? (
+              <div className="relative flex items-center justify-center w-72 h-72 sm:w-88 sm:h-88">
+                <svg className="w-full h-full -rotate-90 transform" viewBox="0 0 320 320">
+                  <circle
+                    cx="160" cy="160" r={radius}
+                    className="text-white/10" strokeWidth="16" stroke="currentColor" fill="transparent"
+                  />
+                  <circle
+                    cx="160" cy="160" r={radius}
+                    stroke="#10B981" strokeWidth="16" strokeDasharray={circumference}
+                    strokeDashoffset={swStrokeDashoffset} strokeLinecap="round" fill="transparent"
+                    className="transition-all duration-300 ease-linear"
+                  />
+                </svg>
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
+                  <div className="text-2xl sm:text-3xl whitespace-nowrap font-black font-mono tracking-tight text-white">
+                    {formatTimerHMS(stopwatchSeconds)}
+                  </div>
+                  <span className="text-xs font-bold text-white/50 tracking-widest uppercase mt-2">
+                    {stopwatchIsRunning ? 'Stopwatch Running' : stopwatchIsPaused ? 'Stopwatch Paused' : 'Ready'}
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className="relative flex items-center justify-center w-80 h-80 sm:w-96 sm:h-96">
+                <svg
+                  viewBox="0 0 340 340"
+                  className="w-full h-full transform -rotate-90 select-none overflow-visible"
+                >
+                  {/* Outer Ring Background */}
+                  <circle
+                    cx="170" cy="170" r={outerRadius}
+                    className="text-white/10" strokeWidth="14" stroke="currentColor" fill="transparent"
+                  />
+                  {/* Outer Ring Active Progress */}
+                  <circle
+                    cx="170" cy="170" r={outerRadius}
+                    stroke={selectedSubject?.color || selectedColor || '#10B981'}
+                    strokeWidth="14" strokeDasharray={outerCircumference}
+                    strokeDashoffset={outerStrokeDashoffset} strokeLinecap="round" fill="transparent"
+                    className="transition-all duration-500 ease-linear"
+                  />
+
+                  {/* Inner Ring (Track & Progress Arc if Pomodoro is ON) */}
+                  {focusStyle === 'pomodoro' && (
+                    <>
+                      <circle
+                        cx="170" cy="170" r={innerRadius}
+                        className="text-white/5" strokeWidth="10" stroke="currentColor" fill="transparent"
+                      />
+                      {activePomoMins > 0 && (
+                        <circle
+                          cx="170" cy="170" r={innerRadius}
+                          stroke={pomodoroPhase === 'break' ? '#F59E0B' : '#3B82F6'}
+                          strokeWidth="10"
+                          strokeDasharray={`${activeInnerArcLength} ${innerCircumference}`}
+                          strokeDashoffset="0" strokeLinecap="round" fill="transparent"
+                          className="transition-all duration-300 ease-linear"
+                        />
+                      )}
+                    </>
+                  )}
+                </svg>
+
+                {/* Center Digits & Phase Readout */}
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-4 pointer-events-none">
+                  <div className="flex items-center justify-center text-2xl sm:text-3xl whitespace-nowrap font-black font-mono tracking-tight text-white drop-shadow-md">
+                    {showHours ? formatTimerHMS(timeLeft) : formatMMSS(timeLeft)}
+                  </div>
+
+                  {focusStyle === 'pomodoro' && isRunning && (
+                    <div className={`mt-3 inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-mono font-bold border ${
+                      pomodoroPhase === 'break'
+                        ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                        : 'bg-blue-500/20 text-blue-300 border-blue-500/30'
+                    }`}>
+                      <span className={`w-2 h-2 rounded-full ${pomodoroPhase === 'break' ? 'bg-amber-400' : 'bg-blue-400'} animate-pulse`} />
+                      <span>
+                        {pomodoroPhase === 'break' ? 'Break' : 'Focus'}: {formatMMSS(phaseTimeLeft)}
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="mt-3 text-xs font-black uppercase tracking-widest text-white/50">
+                    {isPaused ? 'Session Paused' : isRunning ? (pomodoroPhase === 'break' ? 'Rest Break' : 'In Deep Flow') : 'Ready to Focus'}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Bottom Controls: Play / Pause / Skip Button (Fades out when dimmed) */}
+          <div
+            className={`w-full max-w-md flex items-center justify-center transition-opacity duration-700 pb-4 ${
+              isDimmed ? 'opacity-0 pointer-events-none' : 'opacity-100'
+            }`}
+          >
+            {timerMode === 'stopwatch' ? (
+              <div className="flex items-center space-x-4">
+                {!stopwatchIsRunning && !stopwatchIsPaused ? (
+                  <button
+                    onClick={handleStartStopwatch}
+                    className="px-9 py-4 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white font-black text-sm uppercase tracking-wider shadow-lg transition-transform hover:scale-105 cursor-pointer"
+                  >
+                    Start Stopwatch
+                  </button>
+                ) : stopwatchIsRunning ? (
+                  <button
+                    onClick={handlePauseStopwatch}
+                    className="px-9 py-4 rounded-full bg-amber-600 hover:bg-amber-500 text-white font-black text-sm uppercase tracking-wider shadow-lg transition-transform hover:scale-105 cursor-pointer"
+                  >
+                    Pause
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleResumeStopwatch}
+                    className="px-9 py-4 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white font-black text-sm uppercase tracking-wider shadow-lg transition-transform hover:scale-105 cursor-pointer"
+                  >
+                    Resume
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="flex items-center space-x-4">
+                {focusStyle === 'pomodoro' && pomodoroPhase === 'break' && isRunning ? (
+                  <button
+                    onClick={handleSkipBreak}
+                    className="flex items-center space-x-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white px-9 py-4 rounded-full font-black text-sm tracking-wider uppercase shadow-lg shadow-emerald-500/25 transition-transform hover:scale-105 cursor-pointer"
+                  >
+                    <SkipForward className="w-4 h-4 fill-current" />
+                    <span>Skip Rest & Focus</span>
+                  </button>
+                ) : !isRunning && !isPaused ? (
+                  <button
+                    onClick={() => handleStartOrResumeClick('start')}
+                    className="flex items-center space-x-2.5 bg-emerald-500 hover:bg-emerald-400 text-[#06140D] px-11 py-4 rounded-full font-black text-sm tracking-wider uppercase shadow-lg shadow-emerald-500/25 transition-transform hover:scale-105 cursor-pointer"
+                  >
+                    <Play className="w-4 h-4 fill-current" />
+                    <span>START FOCUS</span>
+                  </button>
+                ) : isPaused ? (
+                  <button
+                    onClick={() => handleStartOrResumeClick('resume')}
+                    className="flex items-center space-x-2.5 bg-emerald-500 hover:bg-emerald-400 text-[#06140D] px-10 py-4 rounded-full font-black text-sm tracking-wider uppercase shadow-lg hover:scale-105 transition-transform cursor-pointer"
+                  >
+                    <Play className="w-4 h-4 fill-current" />
+                    <span>Resume Focus</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleBreakButtonClick}
+                    className="flex items-center space-x-2 bg-white/10 hover:bg-white/20 text-white border border-white/20 px-9 py-4 rounded-full font-black text-sm tracking-wider uppercase shadow-md hover:scale-105 transition-transform cursor-pointer"
+                  >
+                    <Pause className="w-4 h-4" />
+                    <span>Take Break</span>
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Ambient Hint when dimmed */}
+          {isDimmed && (
+            <div className="absolute bottom-4 text-[11px] font-medium text-stone-600 tracking-wider transition-opacity duration-1000 opacity-60">
+              Tap screen or move mouse to wake
+            </div>
+          )}
+        </div>,
+        document.body
+      )}
+      {/* -------------------------------------------------------------
+          POMODORO CONTINUOUS ALARM FLOW
+          Stage 1 (ringing): alarm keeps ringing until user clicks Stop Alarm
+          Stage 2 (choice): alarm stops, user chooses break vs continue
+          Mounted via Portal with z-[100000] so it appears on top of Fullscreen & normal views
+          ------------------------------------------------------------- */}
+      {pomodoroAlert && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-[100000] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-[#162420] border-2 border-[#1B3B2F] dark:border-[#34D399] rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl text-center space-y-5 animate-in zoom-in-95 duration-200">
+            {pomodoroAlert.stage === 'ringing' ? (
+              <>
+                <div className={`w-16 h-16 mx-auto rounded-full flex items-center justify-center animate-pulse mb-2 ${pomodoroAlert.phase === 'focus' ? 'bg-rose-500/20' : 'bg-amber-500/20'}`}>
+                  <Bell className={`w-8 h-8 animate-bounce ${pomodoroAlert.phase === 'focus' ? 'text-rose-500' : 'text-amber-500'}`} />
+                </div>
+                <h3 className="text-xl sm:text-2xl font-black text-[#1C2A24] dark:text-[#F2F7F4] tracking-tight">
+                  {pomodoroAlert.phase === 'focus' ? 'Focus Interval Complete!' : 'Break is Over!'}
+                </h3>
+                <p className="text-xs sm:text-sm text-[#576560] dark:text-[#8BA398] font-medium leading-relaxed">
+                  {pomodoroAlert.phase === 'focus'
+                    ? 'Great work! Focus interval ho gaya. Alarm band karne ke liye STOP ALARM dabao.'
+                    : 'Break khatam! Padhai pe wapas lautne ka waqt ho gaya. Alarm band karne ke liye STOP ALARM dabao.'}
+                </p>
+                <div className="pt-2">
+                  <button
+                    onClick={handleStopPomodoroAlarm}
+                    className="w-full py-4 rounded-2xl bg-rose-600 hover:bg-rose-700 text-white font-black text-sm tracking-wider uppercase shadow-lg shadow-rose-500/25 transition-all transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer flex items-center justify-center space-x-2 animate-pulse"
+                  >
+                    <BellOff className="w-5 h-5" />
+                    <span>STOP ALARM</span>
+                  </button>
+                </div>
+              </>
+            ) : pomodoroAlert.phase === 'focus' ? (
+              <>
+                <div className="w-14 h-14 mx-auto rounded-full bg-emerald-500/20 flex items-center justify-center mb-1">
+                  <Sparkles className="w-7 h-7 text-emerald-500" />
+                </div>
+                <h3 className="text-xl font-black text-[#1C2A24] dark:text-[#F2F7F4] tracking-tight">
+                  What next?
+                </h3>
+                <p className="text-xs sm:text-sm text-[#576560] dark:text-[#8BA398] font-medium leading-relaxed">
+                  Focus interval complete. Break lena hai ya padhai continue karni hai?
+                </p>
+                <div className="flex flex-col gap-2.5 pt-2">
+                  <button
+                    onClick={() => handlePomodoroChoice('break')}
+                    className="w-full py-3.5 rounded-2xl bg-[#0D1F17] hover:bg-[#06100B] text-white dark:bg-[#10B981] dark:hover:bg-[#059669] dark:text-[#06140D] font-black text-sm tracking-wide shadow-md transition-all transform hover:scale-[1.01] cursor-pointer"
+                  >
+                    Take Break ({pomodoroBreakMins}m)
+                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handlePomodoroChoice('focus')}
+                      className="flex-1 py-3 rounded-2xl border-2 border-emerald-600/40 dark:border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 font-black text-xs tracking-wide transition cursor-pointer"
+                    >
+                      Start Next Focus ({pomodoroFocusMins}m)
+                    </button>
+                    <button
+                      onClick={() => handlePomodoroChoice('extraFocus')}
+                      className="flex-1 py-3 rounded-2xl border border-stone-200 dark:border-stone-700 text-stone-600 dark:text-stone-300 hover:bg-stone-50 dark:hover:bg-stone-800 font-bold text-xs tracking-wide transition cursor-pointer"
+                    >
+                      +5m Extra Focus
+                    </button>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="w-14 h-14 mx-auto rounded-full bg-emerald-500/20 flex items-center justify-center mb-1">
+                  <BookOpen className="w-7 h-7 text-emerald-600 dark:text-emerald-400" />
+                </div>
+                <h3 className="text-xl sm:text-2xl font-black text-[#1C2A24] dark:text-[#F2F7F4] tracking-tight">
+                  Rest Interval Concluded
+                </h3>
+                <p className="text-xs sm:text-sm text-[#576560] dark:text-[#8BA398] font-medium leading-relaxed">
+                  Aapka break samay poora ho chuka hai. Kya aap agla focus session continue karna chahte hain, ya thoda aur rest extend karna hai?
+                </p>
+                <div className="flex flex-col gap-2.5 pt-2">
+                  <button
+                    onClick={() => handlePomodoroChoice('focus')}
+                    className="w-full py-3.5 rounded-2xl bg-[#0D1F17] hover:bg-[#06100B] text-white dark:bg-[#10B981] dark:hover:bg-[#059669] dark:text-[#06140D] font-black text-sm tracking-wide shadow-md transition-all transform hover:scale-[1.01] cursor-pointer"
+                  >
+                    Resume Focus Session ({pomodoroFocusMins}m)
+                  </button>
+                  <button
+                    onClick={() => handlePomodoroChoice('extraBreak')}
+                    className="w-full py-3 rounded-2xl border border-stone-200 dark:border-stone-700 text-stone-600 dark:text-stone-300 hover:bg-stone-50 dark:hover:bg-stone-800 font-bold text-xs tracking-wide transition cursor-pointer"
+                  >
+                    Extend Rest (+5m)
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Repeating Continuous Alarm Modal (Appears over Fullscreen and Normal Views) */}
+      {isAlarmPlaying && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-[100000] flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-[#162420] border-2 border-rose-500 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl text-center space-y-5 animate-in zoom-in-95 duration-200">
+            <div className="w-16 h-16 mx-auto rounded-full bg-rose-500/20 text-rose-500 flex items-center justify-center animate-bounce">
+              <Bell className="w-8 h-8" />
+            </div>
+            <div>
+              <h3 className="text-xl sm:text-2xl font-black text-[#1C2A24] dark:text-[#F2F7F4] tracking-tight">
+                Daily Goal Complete! 🎉
+              </h3>
+              <p className="text-xs sm:text-sm text-[#576560] dark:text-[#8BA398] font-medium leading-relaxed mt-1">
+                {isAudioBlocked
+                  ? 'Browser autoplay was restricted — alarm is active. Click below to silence.'
+                  : 'Focus session finished! Alarm is ringing continuously.'}
+              </p>
+            </div>
+            <div className="pt-2">
+              <button
+                onClick={handleStopAlarm}
+                className="w-full py-4 rounded-2xl bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-600 hover:to-red-700 text-white font-black text-sm tracking-wide uppercase shadow-lg shadow-rose-500/30 transition transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center space-x-2 cursor-pointer"
+              >
+                <BellOff className="w-5 h-5" />
+                <span>STOP ALARM</span>
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Repeating Continuous Alarm Banner (Inline page banner) */}
       {isAlarmPlaying && (
         <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-rose-500 text-white p-4 sm:p-5 rounded-3xl shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4 animate-pulse">
           <div className="flex items-center space-x-3.5">
@@ -2305,37 +3212,10 @@ export const FocusPage = ({
         </div>
       )}
 
-      {/* Background Notification Status / Permissions Banner */}
-      {pushStatus.supported && (
+      {/* Background Notification Status / Permissions Banner (Hidden when already subscribed) */}
+      {pushStatus.supported && !pushStatus.subscribed && (
         <div className="space-y-2">
-          {pushStatus.subscribed ? (
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 px-4 py-2.5 rounded-2xl bg-emerald-50/80 dark:bg-emerald-950/30 border border-emerald-200/60 dark:border-emerald-800/50 text-xs">
-              <div className="flex items-center space-x-2 text-emerald-800 dark:text-emerald-300 font-bold">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
-                <Bell className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
-                <span>Background alerts active (Lock-screen & background push enabled)</span>
-              </div>
-              <div className="flex items-center space-x-3 self-end sm:self-auto">
-                <button
-                  type="button"
-                  onClick={handleTestPushNotification}
-                  className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 hover:underline cursor-pointer"
-                >
-                  Test Alert
-                </button>
-                <span className="text-emerald-300 dark:text-emerald-700">•</span>
-                <button
-                  type="button"
-                  onClick={handleTogglePushNotifications}
-                  disabled={pushStatus.loading}
-                  className="text-[11px] text-[#576560] dark:text-[#8BA398] hover:text-rose-600 cursor-pointer"
-                >
-                  Disable
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 px-4 py-2.5 rounded-2xl bg-[#FAF8F5] dark:bg-[#1C2E29] border border-[#EAE5DD] dark:border-[#253D35] text-xs">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 px-4 py-2.5 rounded-2xl bg-[#FAF8F5] dark:bg-[#1C2E29] border border-[#EAE5DD] dark:border-[#253D35] text-xs">
               <div className="flex items-center space-x-2.5">
                 <div className="w-7 h-7 rounded-xl bg-[#E8F5EE] dark:bg-[#162420] text-[#1B3B2F] dark:text-[#34D399] flex items-center justify-center flex-shrink-0">
                   <Bell className="w-3.5 h-3.5" />
@@ -2359,7 +3239,6 @@ export const FocusPage = ({
                 <span>{pushStatus.loading ? 'Enabling...' : 'Enable Alerts'}</span>
               </button>
             </div>
-          )}
 
           {/* iOS Safari Tip */}
           {isIOS() && !isStandalonePWA() && (
@@ -2386,49 +3265,41 @@ export const FocusPage = ({
         </div>
       )}
 
-      {/* Mode Selector Pill Tabs */}
-      <div className="flex bg-[#EAF5F0] dark:bg-[#121A16] p-1.5 rounded-full border border-emerald-900/5 dark:border-white/5 max-w-xl mx-auto justify-between shadow-xs relative">
+      {/* Mode Selector & Fullscreen Header Row */}
+      <div className="flex items-center justify-center gap-2.5 max-w-sm sm:max-w-md mx-auto px-1">
+        {/* Mode Selector Pill Tabs */}
+        <div className="flex-1 flex bg-[#EAF5F0] dark:bg-[#121A16] p-1.5 rounded-full border border-emerald-900/5 dark:border-white/5 shadow-xs relative">
+          <button
+            onClick={() => handleModeChange('focus')}
+            className={`flex-1 py-2 sm:py-2.5 px-3 sm:px-5 rounded-full text-xs sm:text-sm font-black transition-all cursor-pointer text-center ${
+              timerMode === 'focus'
+                ? 'bg-[#0D1F17] text-white dark:bg-[#10B981] dark:text-[#06140D] shadow-md shadow-emerald-950/15 dark:shadow-emerald-500/25'
+                : 'text-[#4A5B53] dark:text-[#94A3B8] hover:text-[#0D1F17] dark:hover:text-white'
+            }`}
+          >
+            Deep Focus
+          </button>
+          <button
+            onClick={() => handleModeChange('stopwatch')}
+            className={`flex-1 py-2 sm:py-2.5 px-3 sm:px-5 rounded-full text-xs sm:text-sm font-black transition-all cursor-pointer text-center ${
+              timerMode === 'stopwatch'
+                ? 'bg-[#0D1F17] text-white dark:bg-[#10B981] dark:text-[#06140D] shadow-md shadow-emerald-950/15 dark:shadow-emerald-500/25'
+                : 'text-[#4A5B53] dark:text-[#94A3B8] hover:text-[#0D1F17] dark:hover:text-white'
+            }`}
+          >
+            Stopwatch
+          </button>
+        </div>
+
+        {/* Fullscreen Zen Mode Button */}
         <button
-          onClick={() => handleModeChange('focus')}
-          className={`flex-1 py-2.5 sm:py-3 px-2 sm:px-4 rounded-full text-[11px] sm:text-xs font-black transition-all cursor-pointer text-center ${
-            timerMode === 'focus'
-              ? 'bg-[#0D1F17] text-white dark:bg-[#10B981] dark:text-[#06140D] shadow-md shadow-emerald-950/15 dark:shadow-emerald-500/25'
-              : 'text-[#4A5B53] dark:text-[#94A3B8] hover:text-[#0D1F17] dark:hover:text-white'
-          }`}
+          type="button"
+          onClick={handleEnterFullscreen}
+          className="w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-white dark:bg-[#121A16] border border-emerald-900/10 dark:border-white/10 text-[#4A5B53] dark:text-[#94A3B8] hover:text-[#0D1F17] dark:hover:text-white shadow-xs hover:scale-105 active:scale-95 transition-all flex items-center justify-center flex-shrink-0 cursor-pointer"
+          title="Fullscreen Zen Mode"
+          aria-label="Fullscreen Zen Mode"
         >
-          Deep Focus
-        </button>
-        <button
-          onClick={() => handleModeChange('shortBreak')}
-          className={`flex-1 py-2.5 sm:py-3 px-2 sm:px-4 rounded-full text-[11px] sm:text-xs font-black transition-all cursor-pointer text-center ${
-            timerMode === 'shortBreak'
-              ? 'bg-[#0D1F17] text-white dark:bg-[#10B981] dark:text-[#06140D] shadow-md shadow-emerald-950/15 dark:shadow-emerald-500/25'
-              : 'text-[#4A5B53] dark:text-[#94A3B8] hover:text-[#0D1F17] dark:hover:text-white'
-          }`}
-        >
-          <span className="hidden sm:inline">Short Rest (5m)</span>
-          <span className="sm:hidden">Short (5m)</span>
-        </button>
-        <button
-          onClick={() => handleModeChange('longBreak')}
-          className={`flex-1 py-2.5 sm:py-3 px-2 sm:px-4 rounded-full text-[11px] sm:text-xs font-black transition-all cursor-pointer text-center ${
-            timerMode === 'longBreak'
-              ? 'bg-[#0D1F17] text-white dark:bg-[#10B981] dark:text-[#06140D] shadow-md shadow-emerald-950/15 dark:shadow-emerald-500/25'
-              : 'text-[#4A5B53] dark:text-[#94A3B8] hover:text-[#0D1F17] dark:hover:text-white'
-          }`}
-        >
-          <span className="hidden sm:inline">Long Rest (15m)</span>
-          <span className="sm:hidden">Long (15m)</span>
-        </button>
-        <button
-          onClick={() => handleModeChange('stopwatch')}
-          className={`flex-1 py-2.5 sm:py-3 px-2 sm:px-4 rounded-full text-[11px] sm:text-xs font-black transition-all cursor-pointer text-center ${
-            timerMode === 'stopwatch'
-              ? 'bg-[#0D1F17] text-white dark:bg-[#10B981] dark:text-[#06140D] shadow-md shadow-emerald-950/15 dark:shadow-emerald-500/25'
-              : 'text-[#4A5B53] dark:text-[#94A3B8] hover:text-[#0D1F17] dark:hover:text-white'
-          }`}
-        >
-          Stopwatch
+          <Maximize2 className="w-4 h-4" />
         </button>
       </div>
 
@@ -2463,15 +3334,13 @@ export const FocusPage = ({
               </div>
 
               {!isAnyTimerRunning && (
-                <div className="flex items-center space-x-2">
-                  <div className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-full bg-white dark:bg-[#1E2C26] text-xs font-black text-[#0D1F17] dark:text-white border border-black/5 dark:border-white/10 shadow-xs hover:bg-[#E8F7F0] dark:hover:bg-[#253931] transition-all flex-shrink-0">
-                    <span>Change</span>
-                    <ChevronDown
-                      className={`w-3.5 h-3.5 transition-transform ${
-                        showSubjectMenu ? 'rotate-180' : ''
-                      }`}
-                    />
-                  </div>
+                <div className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-full bg-white dark:bg-[#1E2C26] text-xs font-black text-[#0D1F17] dark:text-white border border-black/5 dark:border-white/10 shadow-xs hover:bg-[#E8F7F0] dark:hover:bg-[#253931] transition-all flex-shrink-0">
+                  <span>Change</span>
+                  <ChevronDown
+                    className={`w-3.5 h-3.5 transition-transform ${
+                      showSubjectMenu ? 'rotate-180' : ''
+                    }`}
+                  />
                 </div>
               )}
             </div>
@@ -2538,34 +3407,7 @@ export const FocusPage = ({
           {timerMode === 'stopwatch' ? (
             <>
               {/* Stopwatch Status Pill */}
-              <div className="mt-6 sm:mt-8 w-full max-w-md mx-auto flex items-center justify-between px-5 py-3 rounded-2xl bg-[#F8FAF9] dark:bg-[#16201C] border border-emerald-900/5 dark:border-white/5 text-xs shadow-xs">
-                <div className="flex items-center space-x-2">
-                  <span className="text-[10px] font-extrabold uppercase tracking-widest text-[#64748B] dark:text-[#94A3B8]">Mode:</span>
-                  <span className="font-black text-sm text-[#0D1F17] dark:text-[#34D399]">Continuous Stopwatch</span>
-                </div>
-                <div className="flex items-center space-x-1.5">
-                  <span
-                    className={`w-2 h-2 rounded-full ${
-                      stopwatchIsRunning
-                        ? 'bg-[#10B981] animate-pulse shadow-[0_0_8px_#10B981]'
-                        : stopwatchIsPaused
-                        ? 'bg-amber-500 shadow-[0_0_8px_#F59E0B]'
-                        : 'bg-stone-400'
-                    }`}
-                  />
-                  <span
-                    className={`font-black text-[11px] uppercase tracking-wider ${
-                      stopwatchIsRunning
-                        ? 'text-emerald-600 dark:text-[#34D399]'
-                        : stopwatchIsPaused
-                        ? 'text-amber-600 dark:text-amber-400'
-                        : 'text-[#82948C]'
-                    }`}
-                  >
-                    {stopwatchIsRunning ? 'Counting Up' : stopwatchIsPaused ? 'Paused' : 'Ready'}
-                  </span>
-                </div>
-              </div>
+             
 
               {/* Dedicated Stopwatch Circular Dial with Large Digits */}
               <div className="relative z-0 my-8 flex items-center justify-center w-full min-h-[350px] sm:min-h-[380px]">
@@ -2733,72 +3575,207 @@ export const FocusPage = ({
             </>
           ) : (
             <>
-              {/* Focus Interval Info / Status */}
-              <div className="mt-6 sm:mt-8 w-full max-w-md mx-auto flex items-center justify-between px-5 py-3 rounded-2xl bg-[#F8FAF9] dark:bg-[#16201C] border border-emerald-900/5 dark:border-white/5 text-xs shadow-xs">
-                <div className="flex items-center space-x-2">
-                  <span className="text-[10px] font-extrabold uppercase tracking-widest text-[#64748B] dark:text-[#94A3B8]">
-                    Focus Interval:
-                  </span>
-                  <span className="font-mono font-black text-sm sm:text-base text-[#0D1F17] dark:text-[#34D399]">
-                    {formatMMSS(intervalSeconds)} / 25:00
-                  </span>
-                </div>
+              {/* Pomodoro Mode Toggle & Presets Bar (Available when idle) */}
+              {!isRunning && !isPaused && (
+                <div className="mt-5 w-full max-w-md mx-auto flex flex-col items-center justify-center gap-2 px-2">
+                  {/* Sleek Toggle Switch Bar */}
+                  <div className="flex items-center justify-between w-full px-4 py-2.5 rounded-2xl bg-[#F8FAF9] dark:bg-[#16201C] border border-emerald-900/5 dark:border-white/5 shadow-xs transition-colors">
+                    <div className="flex items-center space-x-2.5">
+                      <div className={`w-7 h-7 rounded-xl flex items-center justify-center transition-colors ${
+                        focusStyle === 'pomodoro'
+                          ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400'
+                          : 'bg-stone-200/80 dark:bg-stone-800 text-stone-400'
+                      }`}>
+                        <Clock className="w-4 h-4" />
+                      </div>
+                      <div className="text-left">
+                        <span className="text-xs font-black text-[#0D1F17] dark:text-[#E2ECE6] block leading-tight">
+                          Pomodoro Mode
+                        </span>
+                        <span className="text-[10px] text-stone-500 dark:text-stone-400 font-semibold block mt-0.5">
+                          {focusStyle === 'pomodoro'
+                            ? `${pomodoroFocusMins}m focus / ${pomodoroBreakMins}m rest intervals`
+                            : 'Continuous flow without interval breaks'}
+                        </span>
+                      </div>
+                    </div>
 
-                <div>
-                  {isIntervalEligibleForFreeBreak ? (
-                    <span className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-[#D1FAE5] dark:bg-[#10B981]/20 text-[#065F46] dark:text-[#34D399] font-black text-[11px]">
-                      <span>Free Break Ready</span>
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 font-black text-[11px] border border-amber-200 dark:border-amber-800/40">
-                      <span>−1 Coin penalty</span>
-                    </span>
+                    {/* Interactive Toggle Switch */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        sounds.playClick?.();
+                        const nextStyle = focusStyle === 'pomodoro' ? 'continuous' : 'pomodoro';
+                        setFocusStyle(nextStyle);
+                        try {
+                          localStorage.setItem('padhaku_focus_style', nextStyle);
+                        } catch (e) {}
+                      }}
+                      className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                        focusStyle === 'pomodoro' ? 'bg-blue-600' : 'bg-stone-300 dark:bg-stone-700'
+                      }`}
+                      role="switch"
+                      aria-checked={focusStyle === 'pomodoro'}
+                      title={focusStyle === 'pomodoro' ? 'Disable Pomodoro Mode' : 'Enable Pomodoro Mode'}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
+                          focusStyle === 'pomodoro' ? 'translate-x-5' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  {/* Quick Interval Presets (Only visible when Pomodoro Mode is ON) */}
+                  {focusStyle === 'pomodoro' && (
+                    <div className="w-full flex flex-wrap items-center justify-center gap-1.5 pt-0.5 animate-in fade-in slide-in-from-top-1 duration-150">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-stone-400 mr-1">
+                        Interval:
+                      </span>
+                      {[
+                        { focus: 20, breakMins: 5, label: '20m/5m' },
+                        { focus: 25, breakMins: 5, label: '25m/5m' },
+                        { focus: 30, breakMins: 5, label: '30m/5m' },
+                        { focus: 45, breakMins: 10, label: '45m/10m' },
+                        { focus: 50, breakMins: 10, label: '50m/10m' },
+                        { focus: 60, breakMins: 10, label: '60m/10m' },
+                      ].map((preset) => (
+                        <button
+                          key={preset.label}
+                          onClick={() => {
+                            sounds.playClick?.();
+                            setFocusStyle('pomodoro');
+                            setPomodoroFocusMins(preset.focus);
+                            setPomodoroBreakMins(preset.breakMins);
+                            setPhaseTotalSeconds(preset.focus * 60);
+                            setPhaseTimeLeft(preset.focus * 60);
+                            try {
+                              localStorage.setItem('padhaku_focus_style', 'pomodoro');
+                              localStorage.setItem('padhaku_pomo_focus_mins', String(preset.focus));
+                              localStorage.setItem('padhaku_pomo_break_mins', String(preset.breakMins));
+                            } catch (e) {}
+                          }}
+                          className={`px-2.5 py-1 rounded-xl text-[11px] font-black transition cursor-pointer ${
+                            focusStyle === 'pomodoro' && pomodoroFocusMins === preset.focus && pomodoroBreakMins === preset.breakMins
+                              ? 'bg-blue-600 text-white shadow-sm'
+                              : 'bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-300 hover:bg-stone-200 dark:hover:bg-stone-700'
+                          }`}
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
                   )}
                 </div>
-              </div>
+              )}
 
-              {/* Session Metrics Bar (Total Duration, Elapsed Time, Remaining Time, Status) */}
-           
-
-              {/* Radial Timer Dial with HUGE Interactive Numbers */}
-              <div className="relative z-0 my-8 flex items-center justify-center w-full min-h-[350px] sm:min-h-[380px]">
-                <div className="relative flex items-center justify-center">
-                  <svg className="w-72 h-72 sm:w-84 sm:h-84 md:w-92 md:h-92 transform -rotate-90" viewBox="0 0 320 320">
-                    <defs>
-                      <linearGradient id="focusProgressGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                        <stop offset="0%" stopColor="#10B981" />
-                        <stop offset="100%" stopColor="#34D399" />
-                      </linearGradient>
-                    </defs>
-                    {/* Background Track Circle */}
+              {/* DUAL-RING CIRCULAR DIAL */}
+              <div className="relative z-0 my-6 sm:my-8 flex items-center justify-center w-full min-h-[350px] sm:min-h-[380px]">
+                <div className="relative flex items-center justify-center w-full max-w-[340px] sm:max-w-[380px] aspect-square">
+                  <svg
+                    ref={svgRef}
+                    viewBox="0 0 340 340"
+                    className="w-full h-full transform -rotate-90 select-none touch-none overflow-visible"
+                    onPointerDown={handleSvgPointerDown}
+                  >
+                    {/* Outer Ring Background (Total Goal Track) */}
                     <circle
-                      cx="160"
-                      cy="160"
-                      r={radius}
+                      cx="170"
+                      cy="170"
+                      r={outerRadius}
                       className="text-[#E6F4ED] dark:text-[#182420]"
-                      strokeWidth="18"
+                      strokeWidth="14"
                       stroke="currentColor"
                       fill="transparent"
                     />
-                    {/* Animated Progress Circle */}
+                    {/* Outer Ring Active Progress (Depletes as overall session time decreases) */}
                     <circle
-                      cx="160"
-                      cy="160"
-                      r={radius}
-                      stroke={selectedSubject?.color || 'url(#focusProgressGradient)'}
-                      strokeWidth="20"
-                      strokeDasharray={circumference}
-                      strokeDashoffset={strokeDashoffset}
+                      cx="170"
+                      cy="170"
+                      r={outerRadius}
+                      stroke={selectedSubject?.color || selectedColor || '#10B981'}
+                      strokeWidth="14"
+                      strokeDasharray={outerCircumference}
+                      strokeDashoffset={outerStrokeDashoffset}
                       strokeLinecap="round"
                       fill="transparent"
-                      className="transition-all duration-1000 ease-linear"
-                      style={{ filter: 'drop-shadow(0 4px 12px rgba(16, 185, 129, 0.35))' }}
+                      className="transition-all duration-500 ease-linear"
+                      style={{ filter: 'drop-shadow(0 2px 8px rgba(16, 185, 129, 0.3))' }}
                     />
+
+                    {/* Inner Ring (Track, Progress Arc & Drag Knob) - ONLY rendered when Pomodoro is ON */}
+                    {focusStyle === 'pomodoro' && (
+                      <>
+                        {/* Inner Ring Background (Pomodoro Interval Track) */}
+                        <circle
+                          cx="170"
+                          cy="170"
+                          r={innerRadius}
+                          className="text-stone-200/80 dark:text-stone-800/40"
+                          strokeWidth="10"
+                          stroke="currentColor"
+                          fill="transparent"
+                        />
+                        {/* Inner Ring Active Progress (Pomodoro Arc) */}
+                        {activePomoMins > 0 && (
+                          <circle
+                            cx="170"
+                            cy="170"
+                            r={innerRadius}
+                            stroke={pomodoroPhase === 'break' ? '#F59E0B' : '#3B82F6'}
+                            strokeWidth="10"
+                            strokeDasharray={`${activeInnerArcLength} ${innerCircumference}`}
+                            strokeDashoffset="0"
+                            strokeLinecap="round"
+                            fill="transparent"
+                            className="transition-all duration-300 ease-linear"
+                            style={{
+                              filter: pomodoroPhase === 'break'
+                                ? 'drop-shadow(0 2px 6px rgba(245, 158, 11, 0.35))'
+                                : 'drop-shadow(0 2px 6px rgba(59, 130, 246, 0.35))',
+                            }}
+                          />
+                        )}
+
+                        {/* Interactive Drag Knob on Inner Ring (Available when idle) */}
+                        {!isRunning && !isPaused && (
+                          <g className="cursor-grab active:cursor-grabbing select-none">
+                            {/* Invisible larger hit circle for effortless grabbing on touch & mouse */}
+                            <circle
+                              cx={knobX}
+                              cy={knobY}
+                              r="22"
+                              fill="transparent"
+                              className="cursor-grab active:cursor-grabbing"
+                            />
+                            {/* Crisp visible knob permanently locked onto inner radius track without escaping */}
+                            <circle
+                              cx={knobX}
+                              cy={knobY}
+                              r={isDragging ? 11 : 9.5}
+                              fill="#3B82F6"
+                              stroke="#FFFFFF"
+                              strokeWidth="2.5"
+                              className="drop-shadow-md"
+                            />
+                            {/* Tooltip visible only when dragging */}
+                            {isDragging && (
+                              <g transform={`translate(${knobX}, ${knobY}) rotate(90)`} className="pointer-events-none select-none">
+                                <rect x="-26" y="-36" width="52" height="22" rx="11" fill="#1E293B" />
+                                <text x="0" y="-21" textAnchor="middle" fill="#FFFFFF" fontSize="11" fontWeight="bold" fontFamily="monospace">
+                                  {dragMinutes <= 0 ? 'Off' : `${dragMinutes}m`}
+                                </text>
+                              </g>
+                            )}
+                          </g>
+                        )}
+                      </>
+                    )}
                   </svg>
 
                   {/* Inner Clock Face readout */}
-                  <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-4">
-                    <div className="flex items-center justify-center text-5xl sm:text-6xl md:text-7xl font-black font-mono tracking-tight text-[#0D1F17] dark:text-white">
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-4 pointer-events-none">
+                    <div className="flex items-center justify-center flex-nowrap whitespace-nowrap text-2xl sm:text-3xl md:text-4xl font-black font-mono tracking-tight text-[#0D1F17] dark:text-white pointer-events-auto select-none">
                       {showHours && (
                         <EditableSegment
                           field="h"
@@ -2836,19 +3813,13 @@ export const FocusPage = ({
                       />
                     </div>
 
-                    <div className="mt-4 sm:mt-5 inline-flex items-center space-x-2 px-4 py-1.5 rounded-full bg-[#E8F7F0] dark:bg-[#182420] border border-[#A7F3D0]/60 dark:border-[#34D399]/25 shadow-xs">
-                      <span
-                        className={`w-2 h-2 rounded-full ${
-                          isRunning && !isPaused
-                            ? 'bg-[#10B981] animate-pulse shadow-[0_0_8px_#10B981]'
-                            : isPaused
-                            ? 'bg-amber-500 shadow-[0_0_8px_#F59E0B]'
-                            : 'bg-stone-400'
-                        }`}
-                      />
-                      <span className="text-[11px] font-black uppercase tracking-widest text-[#0D1F17] dark:text-[#E2ECE6]">
-                        {isPaused ? 'Session Paused' : isRunning ? 'In Deep Flow' : 'Ready to Focus'}
-                      </span>
+                    
+
+                    {/* Status Pill */}
+                    
+                    {/* Expected Completion Time */}
+                    <div className="text-[#576560] dark:text-[#8BA398] text-[10px] sm:text-[11px] font-semibold flex items-center space-x-1 mt-2 bg-[#FAF8F5] dark:bg-[#1C2E29] px-3 py-0.5 rounded-full border border-[#EAE5DD] dark:border-[#253D35]">
+                      <span>Expected completion: <strong className="text-[#1C2A24] dark:text-[#F2F7F4] font-mono">{formatExpectedTime(getExpectedCompletionDate())}</strong></span>
                     </div>
                   </div>
                 </div>
@@ -2889,9 +3860,18 @@ export const FocusPage = ({
                       <Square className="w-4 h-4 text-rose-500 fill-rose-500" />
                     </button>
                   </>
+                ) : focusStyle === 'pomodoro' && pomodoroPhase === 'break' ? (
+                  /* Dedicated single Skip button when rest timer is running */
+                  <button
+                    onClick={handleSkipBreak}
+                    className="flex items-center space-x-2.5 bg-[#0D1F17] hover:bg-[#06100B] text-white dark:bg-[#10B981] dark:hover:bg-[#059669] dark:text-[#06140D] px-9 sm:px-11 py-3.5 sm:py-4 rounded-full font-black text-sm tracking-wider uppercase shadow-lg shadow-emerald-950/15 dark:shadow-emerald-500/25 transition-all transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+                  >
+                    <SkipForward className="w-4 h-4 fill-current" />
+                    <span>Skip Rest & Start Focus</span>
+                  </button>
                 ) : (
                   <>
-                    {/* Active running: user can take break */}
+                    {/* Active running focus: user can take break */}
                     <button
                       onClick={handleBreakButtonClick}
                       className={`flex items-center space-x-2 border-2 px-8 py-3.5 rounded-full font-black text-sm tracking-wide shadow-sm hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer ${
@@ -2938,9 +3918,9 @@ export const FocusPage = ({
         </div>
       </div>
 
-      {/* SECTION 2: 25-MINUTE BREAK PENALTY CONFIRMATION DIALOG */}
-      {showBreakConfirmation && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+      {/* SECTION 2: 25-MINUTE BREAK PENALTY CONFIRMATION DIALOG (Mounted via Portal with z-[100000]) */}
+      {showBreakConfirmation && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-[100000] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-white dark:bg-[#162420] border-2 border-amber-500/60 dark:border-amber-400/60 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl text-center space-y-5 animate-in zoom-in-95 duration-200">
             <div className="w-12 h-12 rounded-2xl bg-amber-500/15 text-amber-600 dark:text-amber-400 mx-auto flex items-center justify-center">
               <AlertTriangle className="w-6 h-6" />
@@ -2988,12 +3968,13 @@ export const FocusPage = ({
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
-      {/* 5-SECOND COUNTDOWN MODAL BEFORE TIMER STARTS OR RESUMES */}
-      {showCountdownModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+      {/* 5-SECOND COUNTDOWN MODAL BEFORE TIMER STARTS OR RESUMES (Mounted via Portal with z-[100000]) */}
+      {showCountdownModal && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-[100000] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-white dark:bg-[#162420] border-2 border-[#1B3B2F] dark:border-[#34D399] rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl text-center space-y-6 animate-in zoom-in-95 duration-200 relative overflow-hidden">
             <div className="inline-flex items-center space-x-2 px-3.5 py-1.5 rounded-full bg-[#E8F5EE] dark:bg-[#1C2E29] border border-[#C8E6D5] dark:border-[#2B5246] text-xs font-bold text-[#1B3B2F] dark:text-[#A3D9C9]">
               <span>🌱 Padhaku Billa Focus Session</span>
@@ -3033,7 +4014,8 @@ export const FocusPage = ({
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* STOPWATCH SAVE & ACTIVITY LOGGING MODAL */}

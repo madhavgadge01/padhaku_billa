@@ -539,6 +539,129 @@ export const FocusTimeDistribution = ({
     return ticks;
   }, []);
 
+  // 7-Day ticks and labels around the week circular clock
+  const weekTicks = useMemo(() => {
+    const DAYS = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+    const daySpan = 360 / 7;
+    const ticks = [];
+
+    DAYS.forEach((day, i) => {
+      // Day boundary tick mark at the start of the day
+      const boundaryAngle = -90 + i * daySpan;
+      // Mid-day angle (noon / center of the day arc)
+      const midAngle = boundaryAngle + daySpan / 2;
+
+      // Major tick mark at boundary between days
+      ticks.push({
+        id: `boundary_${day}`,
+        day,
+        angle: boundaryAngle,
+        isMajor: true,
+        isQuarter: false,
+        labelText: null,
+      });
+
+      // Day name label and midpoint sub-tick
+      ticks.push({
+        id: `label_${day}`,
+        day,
+        angle: midAngle,
+        isMajor: false,
+        isQuarter: true,
+        labelText: day,
+      });
+    });
+
+    return ticks;
+  }, []);
+
+  // 7 formatted date keys for Monday -> Sunday of current week
+  const weekDayDateStrs = useMemo(() => {
+    const list = [];
+    const mon = new Date(currentWeekRange.monday);
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(mon);
+      d.setDate(mon.getDate() + i);
+      list.push(formatDateKey(d));
+    }
+    return list;
+  }, [currentWeekRange]);
+
+  // Week clock data: sessions mapped to 7-day circular clock dial
+  const weekClockData = useMemo(() => {
+    const { mondayStr, sundayStr } = currentWeekRange;
+    const weekSessions = normalizedSessions.filter(
+      (s) => s.dateStr >= mondayStr && s.dateStr <= sundayStr
+    );
+    const totalM = weekSessions.reduce((acc, s) => acc + s.minutes, 0);
+
+    const dayAngleSpan = 360 / 7; // ~51.42857 degrees per day
+    const dayGap = 2; // gap between day sectors
+    const availableDaySpan = dayAngleSpan - dayGap;
+
+    const segments = [];
+
+    weekDayDateStrs.forEach((dateStr, dayIndex) => {
+      const daySessions = weekSessions.filter((s) => s.dateStr === dateStr);
+      if (daySessions.length === 0) return;
+
+      const dayTotalMins = daySessions.reduce((acc, s) => acc + s.minutes, 0);
+      const dayStartAngle = -90 + dayIndex * dayAngleSpan + dayGap / 2;
+
+      const count = daySessions.length;
+      const sessGap = count > 1 ? 1 : 0;
+      const totalSessGaps = (count - 1) * sessGap;
+      const availableForSess = Math.max(1, availableDaySpan - totalSessGaps);
+
+      let currentAngle = dayStartAngle;
+
+      daySessions.forEach((sess, sessIdx) => {
+        const mins = Number(sess.minutes) || 1;
+        const proportion = dayTotalMins > 0 ? mins / dayTotalMins : 1 / count;
+        let span = proportion * availableForSess;
+        if (span < 2.5) span = 2.5;
+
+        const startAngle = currentAngle;
+        const endAngle = currentAngle + span;
+        currentAngle = endAngle + sessGap;
+
+        const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+        const dayLabel = dayNames[dayIndex] || '';
+
+        const startTimeStr = formatSessionTime(sess.startTime);
+        const endTimeStr = formatSessionTime(
+          sess.endTime || new Date(new Date(sess.startTime).getTime() + mins * 60000)
+        );
+
+        const subjectSessions = weekSessions.filter(
+          (s) => s.name.toLowerCase() === sess.name.toLowerCase()
+        );
+        const subjectTotalMins = subjectSessions.reduce((acc, s) => acc + s.minutes, 0);
+
+        segments.push({
+          ...sess,
+          id: sess.id || `week_seg_${dayIndex}_${sessIdx}`,
+          name: sess.name,
+          activityName: sess.activityDescription || sess.taskName || sess.name,
+          dayLabel,
+          color: sess.color,
+          minutes: mins,
+          totalMinutes: subjectTotalMins,
+          startTimeStr,
+          endTimeStr,
+          startAngle,
+          endAngle,
+          sessions: subjectSessions,
+        });
+      });
+    });
+
+    return {
+      segments,
+      totalMinutes: totalM,
+    };
+  }, [normalizedSessions, currentWeekRange, weekDayDateStrs]);
+
   // Day clock data: sessions mapped to real 24-hour dial angles (-90° to 270°)
   const dayClockData = useMemo(() => {
     const daySessions = normalizedSessions.filter((s) => s.dateStr === selectedDayStr);
@@ -612,12 +735,11 @@ export const FocusTimeDistribution = ({
   // Currently selected segment object
   const selectedSegment = useMemo(() => {
     if (!selectedSegmentId) return null;
-    if (mode === 'day') {
-      const found = dayClockData.segments.find((s) => s.id === selectedSegmentId);
-      if (found) return found;
-    }
+    const activeSegments = mode === 'day' ? dayClockData.segments : weekClockData.segments;
+    const found = activeSegments.find((s) => s.id === selectedSegmentId);
+    if (found) return found;
     return donutSegments.find((s) => s.id === selectedSegmentId) || null;
-  }, [selectedSegmentId, mode, dayClockData.segments, donutSegments]);
+  }, [selectedSegmentId, mode, dayClockData.segments, weekClockData.segments, donutSegments]);
 
   // Close detail panel when clicking outside the component
   useEffect(() => {
@@ -761,252 +883,274 @@ export const FocusTimeDistribution = ({
         </div>
       </div>
 
-      {/* Main Content: 24-Hour Circular Clock (Day mode) or Circular Donut Chart (Week mode) */}
-      {mode === 'week' && donutSegments.length === 0 ? (
-        <div className="py-14 text-center rounded-3xl bg-stone-50 dark:bg-[#182420]/50 border border-emerald-950/5 dark:border-white/5 p-6 space-y-2">
-          <div className="w-12 h-12 rounded-2xl bg-white dark:bg-[#121A17] text-2xl flex items-center justify-center mx-auto shadow-xs">
-            ☕
-          </div>
-          <div className="text-sm font-black text-[#0D1F17] dark:text-white">
-            No focus sessions recorded for this week.
-          </div>
-          <p className="text-xs text-stone-400 max-w-sm mx-auto">
-            Both Deep Focus sessions and saved Stopwatch sessions will automatically appear in this circular chart.
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-6">
-          {mode === 'day' ? (
-            /* Circular 24-Hour Clock Container */
-            <div className="flex flex-col items-center justify-center pt-6 pb-8 relative">
-              <div className="relative w-full max-w-[340px] sm:max-w-[400px] aspect-square flex items-center justify-center">
-                <svg
-                  viewBox="0 0 340 340"
-                  className="w-full h-full select-none overflow-visible"
-                >
-                  <defs>
-                    {/* Subtle inner shadow for the track to make it look embedded */}
-                    <filter id="trackInsetShadow" x="-20%" y="-20%" width="140%" height="140%">
-                      <feOffset dx="0" dy="1"/>
-                      <feGaussianBlur stdDeviation="2" result="offset-blur"/>
-                      <feComposite operator="out" in="SourceGraphic" in2="offset-blur" result="inverse"/>
-                      <feFlood floodColor="black" floodOpacity="0.1" result="color"/>
-                      <feComposite operator="in" in="color" in2="inverse" result="shadow"/>
-                      <feComposite operator="over" in="shadow" in2="SourceGraphic"/>
-                    </filter>
-                  </defs>
+      {/* Main Content: 24-Hour Circular Clock (Day mode) or 7-Day Circular Clock (Week mode) */}
+      <div className="space-y-6">
+        {mode === 'day' ? (
+          /* Circular 24-Hour Clock Container */
+          <div className="flex flex-col items-center justify-center pt-6 pb-8 relative">
+            <div className="relative w-full max-w-[340px] sm:max-w-[400px] aspect-square flex items-center justify-center">
+              <svg
+                viewBox="0 0 340 340"
+                className="w-full h-full select-none overflow-visible"
+              >
+                <defs>
+                  {/* Subtle inner shadow for the track to make it look embedded */}
+                  <filter id="trackInsetShadow" x="-20%" y="-20%" width="140%" height="140%">
+                    <feOffset dx="0" dy="1"/>
+                    <feGaussianBlur stdDeviation="2" result="offset-blur"/>
+                    <feComposite operator="out" in="SourceGraphic" in2="offset-blur" result="inverse"/>
+                    <feFlood floodColor="black" floodOpacity="0.1" result="color"/>
+                    <feComposite operator="in" in="color" in2="inverse" result="shadow"/>
+                    <feComposite operator="over" in="shadow" in2="SourceGraphic"/>
+                  </filter>
+                </defs>
 
-                  {/* Outer Ring Ambient Track (Slimmer and cleaner) */}
-                  <circle
-                    cx="170"
-                    cy="170"
-                    r="130"
-                    fill="none"
+                {/* Outer Ring Ambient Track (Slimmer and cleaner) */}
+                <circle
+                  cx="170"
+                  cy="170"
+                  r="130"
+                  fill="none"
+                  stroke="currentColor"
+                  className="text-stone-100 dark:text-stone-800/40"
+                  strokeWidth="24"
+                  filter="url(#trackInsetShadow)"
+                />
+
+                {/* 24 Hour Radial Tick Marks (Minimalist) */}
+                {hourTicks.map((tick) => (
+                  <line
+                    key={`tick_${tick.hour}`}
+                    // Adjusting coordinate math inline for new center/radius
+                    x1={170 + 118 * Math.cos(tick.angle * Math.PI / 180)}
+                    y1={170 + 118 * Math.sin(tick.angle * Math.PI / 180)}
+                    x2={170 + 142 * Math.cos(tick.angle * Math.PI / 180)}
+                    y2={170 + 142 * Math.sin(tick.angle * Math.PI / 180)}
                     stroke="currentColor"
-                    className="text-stone-100 dark:text-stone-800/40"
-                    strokeWidth="24"
-                    filter="url(#trackInsetShadow)"
+                    className={
+                      tick.isMajor
+                        ? 'text-stone-300 dark:text-stone-600'
+                        : tick.isQuarter
+                        ? 'text-stone-200 dark:text-stone-700/60'
+                        : 'text-stone-100 dark:text-stone-800/30'
+                    }
+                    strokeWidth={tick.isMajor ? 2 : tick.isQuarter ? 1.5 : 1}
                   />
+                ))}
 
-                  {/* 24 Hour Radial Tick Marks (Minimalist) */}
-                  {hourTicks.map((tick) => (
-                    <line
-                      key={`tick_${tick.hour}`}
-                      // Adjusting coordinate math inline for new center/radius
-                      x1={170 + 118 * Math.cos(tick.angle * Math.PI / 180)}
-                      y1={170 + 118 * Math.sin(tick.angle * Math.PI / 180)}
-                      x2={170 + 142 * Math.cos(tick.angle * Math.PI / 180)}
-                      y2={170 + 142 * Math.sin(tick.angle * Math.PI / 180)}
-                      stroke="currentColor"
-                      className={
-                        tick.isMajor
-                          ? 'text-stone-300 dark:text-stone-600'
-                          : tick.isQuarter
-                          ? 'text-stone-200 dark:text-stone-700/60'
-                          : 'text-stone-100 dark:text-stone-800/30'
-                      }
-                      strokeWidth={tick.isMajor ? 2 : tick.isQuarter ? 1.5 : 1}
-                    />
+                {/* 24 Hour Circular Text Labels */}
+                {hourTicks
+                  .filter((t) => t.labelText)
+                  .map((t) => (
+                    <text
+                      key={`label_${t.hour}`}
+                      x={170 + 160 * Math.cos(t.angle * Math.PI / 180)}
+                      y={170 + 160 * Math.sin(t.angle * Math.PI / 180)}
+                      textAnchor="middle"
+                      dominantBaseline="central"
+                      className="fill-stone-400 dark:fill-stone-500 text-[9px] sm:text-[10px] font-bold font-mono uppercase tracking-widest"
+                    >
+                      {t.labelText}
+                    </text>
                   ))}
 
-                  {/* 24 Hour Circular Text Labels */}
-                  {hourTicks
-                    .filter((t) => t.labelText)
-                    .map((t) => (
-                      <text
-                        key={`label_${t.hour}`}
-                        x={170 + 160 * Math.cos(t.angle * Math.PI / 180)}
-                        y={170 + 160 * Math.sin(t.angle * Math.PI / 180)}
-                        textAnchor="middle"
-                        dominantBaseline="central"
-                        className="fill-stone-400 dark:fill-stone-500 text-[9px] sm:text-[10px] font-bold font-mono uppercase tracking-widest"
-                      >
-                        {t.labelText}
-                      </text>
-                    ))}
-
-                  {/* Active Session Colored Arcs */}
-                  {dayClockData.segments.map((seg) => {
-                    const isSelected = selectedSegmentId === seg.id;
-                    const isHovered = hoveredSegmentId === seg.id;
-                    const isSameSubject = selectedSegment && selectedSegment.name.toLowerCase() === seg.name.toLowerCase();
-                    
-                    // Clean hover sizes - not too thick, just right
-                    const strokeW = isSelected ? 32 : isHovered ? 28 : isSameSubject ? 26 : 24;
-
-                    const pathData = describeArc(170, 170, 130, seg.startAngle, seg.endAngle);
-
-                    return (
-                      <path
-                        key={seg.id}
-                        d={pathData}
-                        fill="none"
-                        stroke={seg.color}
-                        strokeWidth={strokeW}
-                        strokeLinecap="butt"
-                        className="cursor-pointer transition-all duration-200 ease-in-out origin-center"
-                        style={{
-                          opacity: selectedSegmentId && !isSameSubject ? 0.2 : (isSelected || isHovered ? 1 : 0.9),
-                          transform: (isSelected || isHovered) ? 'scale(1.02)' : 'scale(1)',
-                          transformOrigin: '170px 170px'
-                        }}
-                        onMouseEnter={() => setHoveredSegmentId(seg.id)}
-                        onMouseLeave={() => setHoveredSegmentId(null)}
-                        onClick={() => {
-                          sounds.playClick();
-                          setSelectedSegmentId((prev) => (prev === seg.id ? null : seg.id));
-                        }}
-                      >
-                        <title>{`${seg.activityName} (${seg.startTimeStr} – ${seg.endTimeStr}): ${formatMinutes(seg.minutes)}`}</title>
-                      </path>
-                    );
-                  })}
-                </svg>
-
-                {/* Inside Clock Center: Display Day & Total Focus Time */}
-                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-center px-6">
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-stone-400 mb-1">
-                    {formattedDayLabel}
-                  </span>
+                {/* Active Session Colored Arcs */}
+                {dayClockData.segments.map((seg) => {
+                  const isSelected = selectedSegmentId === seg.id;
+                  const isHovered = hoveredSegmentId === seg.id;
+                  const isSameSubject = selectedSegment && selectedSegment.name.toLowerCase() === seg.name.toLowerCase();
                   
-                  <span className="text-3xl sm:text-4xl font-black font-sans tracking-tight text-[#0D1F17] dark:text-white my-1">
-                    {formatDonutCenterTime(dayClockData.totalMinutes)}
+                  // Clean hover sizes - not too thick, just right
+                  const strokeW = isSelected ? 32 : isHovered ? 28 : isSameSubject ? 26 : 24;
+
+                  const pathData = describeArc(170, 170, 130, seg.startAngle, seg.endAngle);
+
+                  return (
+                    <path
+                      key={seg.id}
+                      d={pathData}
+                      fill="none"
+                      stroke={seg.color}
+                      strokeWidth={strokeW}
+                      strokeLinecap="butt"
+                      className="cursor-pointer transition-all duration-200 ease-in-out origin-center"
+                      style={{
+                        opacity: selectedSegmentId && !isSameSubject ? 0.2 : (isSelected || isHovered ? 1 : 0.9),
+                        transform: (isSelected || isHovered) ? 'scale(1.02)' : 'scale(1)',
+                        transformOrigin: '170px 170px'
+                      }}
+                      onMouseEnter={() => setHoveredSegmentId(seg.id)}
+                      onMouseLeave={() => setHoveredSegmentId(null)}
+                      onClick={() => {
+                        sounds.playClick();
+                        setSelectedSegmentId((prev) => (prev === seg.id ? null : seg.id));
+                      }}
+                    >
+                      <title>{`${seg.activityName} (${seg.startTimeStr} – ${seg.endTimeStr}): ${formatMinutes(seg.minutes)}`}</title>
+                    </path>
+                  );
+                })}
+              </svg>
+
+              {/* Inside Clock Center: Display Day & Total Focus Time */}
+              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-center px-6">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-stone-400 mb-1">
+                  {formattedDayLabel}
+                </span>
+                
+                <span className="text-3xl sm:text-4xl font-black font-sans tracking-tight text-[#0D1F17] dark:text-white my-1">
+                  {formatDonutCenterTime(dayClockData.totalMinutes)}
+                </span>
+                
+                <div className="flex items-center space-x-1.5 mt-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#10B981]" />
+                  <span className="text-[10px] font-semibold text-stone-500">
+                    {dayClockData.segments.length}{' '}
+                    {dayClockData.segments.length === 1 ? 'Session' : 'Sessions'}
                   </span>
-                  
-                  <div className="flex items-center space-x-1.5 mt-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#10B981]" />
-                    <span className="text-[10px] font-semibold text-stone-500">
-                      {dayClockData.segments.length}{' '}
-                      {dayClockData.segments.length === 1 ? 'Session' : 'Sessions'}
-                    </span>
-                  </div>
                 </div>
               </div>
             </div>
-          ) : (
-            /* Week Mode Donut Presentation Container */
-            <div className="flex flex-col items-center justify-center pt-6 pb-8 relative">
-              <div className="relative w-full max-w-[340px] sm:max-w-[400px] aspect-square flex items-center justify-center">
-                <svg
-                  viewBox="0 0 340 340"
-                  className="w-full h-full transform -rotate-90 select-none overflow-visible"
-                >
-                  <circle
-                    cx="170"
-                    cy="170"
-                    r="130"
-                    fill="none"
+          </div>
+        ) : (
+          /* Circular 7-Day Week Clock Container - EXACT SAME DESIGN */
+          <div className="flex flex-col items-center justify-center pt-6 pb-8 relative">
+            <div className="relative w-full max-w-[340px] sm:max-w-[400px] aspect-square flex items-center justify-center">
+              <svg
+                viewBox="0 0 340 340"
+                className="w-full h-full select-none overflow-visible"
+              >
+                <defs>
+                  {/* Subtle inner shadow for the track to make it look embedded */}
+                  <filter id="trackInsetShadowWeek" x="-20%" y="-20%" width="140%" height="140%">
+                    <feOffset dx="0" dy="1"/>
+                    <feGaussianBlur stdDeviation="2" result="offset-blur"/>
+                    <feComposite operator="out" in="SourceGraphic" in2="offset-blur" result="inverse"/>
+                    <feFlood floodColor="black" floodOpacity="0.1" result="color"/>
+                    <feComposite operator="in" in="color" in2="inverse" result="shadow"/>
+                    <feComposite operator="over" in="shadow" in2="SourceGraphic"/>
+                  </filter>
+                </defs>
+
+                {/* Outer Ring Ambient Track (Slimmer and cleaner) */}
+                <circle
+                  cx="170"
+                  cy="170"
+                  r="130"
+                  fill="none"
+                  stroke="currentColor"
+                  className="text-stone-100 dark:text-stone-800/40"
+                  strokeWidth="24"
+                  filter="url(#trackInsetShadowWeek)"
+                />
+
+                {/* 7-Day Radial Tick Marks (Minimalist) */}
+                {weekTicks.map((tick) => (
+                  <line
+                    key={`tick_week_${tick.id}`}
+                    x1={170 + 118 * Math.cos(tick.angle * Math.PI / 180)}
+                    y1={170 + 118 * Math.sin(tick.angle * Math.PI / 180)}
+                    x2={170 + 142 * Math.cos(tick.angle * Math.PI / 180)}
+                    y2={170 + 142 * Math.sin(tick.angle * Math.PI / 180)}
                     stroke="currentColor"
-                    className="text-stone-100 dark:text-[#182420]"
-                    strokeWidth="24"
-                  />
-
-                  {donutSegments.map((seg) => {
-                    const isSelected = selectedSegmentId === seg.id;
-                    const isHovered = hoveredSegmentId === seg.id;
-                    const isSameSubject = selectedSegment && selectedSegment.name.toLowerCase() === seg.name.toLowerCase();
-                    const strokeW = isSelected ? 32 : isHovered ? 28 : isSameSubject ? 26 : 24;
-
-                    if (seg.isSingle) {
-                      return (
-                        <circle
-                          key={seg.id}
-                          cx="170"
-                          cy="170"
-                          r="130"
-                          fill="none"
-                          stroke={seg.color}
-                          strokeWidth={strokeW}
-                          className="cursor-pointer transition-all duration-200 ease-in-out origin-center"
-                          style={{
-                            opacity: selectedSegmentId && !isSameSubject ? 0.2 : (isSelected || isHovered ? 1 : 0.9),
-                            transform: (isSelected || isHovered) ? 'scale(1.02)' : 'scale(1)',
-                            transformOrigin: '170px 170px'
-                          }}
-                          onMouseEnter={() => setHoveredSegmentId(seg.id)}
-                          onMouseLeave={() => setHoveredSegmentId(null)}
-                          onClick={() => {
-                            sounds.playClick();
-                            setSelectedSegmentId((prev) => (prev === seg.id ? null : seg.id));
-                          }}
-                        />
-                      );
+                    className={
+                      tick.isMajor
+                        ? 'text-stone-300 dark:text-stone-600'
+                        : tick.isQuarter
+                        ? 'text-stone-200 dark:text-stone-700/60'
+                        : 'text-stone-100 dark:text-stone-800/30'
                     }
+                    strokeWidth={tick.isMajor ? 2 : tick.isQuarter ? 1.5 : 1}
+                  />
+                ))}
 
-                    const pathData = describeArc(170, 170, 130, seg.startAngle, seg.endAngle);
+                {/* 7-Day Circular Text Labels */}
+                {weekTicks
+                  .filter((t) => t.labelText)
+                  .map((t) => (
+                    <text
+                      key={`label_week_${t.id}`}
+                      x={170 + 160 * Math.cos(t.angle * Math.PI / 180)}
+                      y={170 + 160 * Math.sin(t.angle * Math.PI / 180)}
+                      textAnchor="middle"
+                      dominantBaseline="central"
+                      className="fill-stone-400 dark:fill-stone-500 text-[9px] sm:text-[10px] font-bold font-mono uppercase tracking-widest"
+                    >
+                      {t.labelText}
+                    </text>
+                  ))}
 
-                    return (
-                      <path
-                        key={seg.id}
-                        d={pathData}
-                        fill="none"
-                        stroke={seg.color}
-                        strokeWidth={strokeW}
-                        strokeLinecap="round"
-                        className="cursor-pointer transition-all duration-200 ease-in-out origin-center"
-                        style={{
-                          opacity: selectedSegmentId && !isSameSubject ? 0.2 : (isSelected || isHovered ? 1 : 0.9),
-                          transform: (isSelected || isHovered) ? 'scale(1.02)' : 'scale(1)',
-                          transformOrigin: '170px 170px',
-                        }}
-                        onMouseEnter={() => setHoveredSegmentId(seg.id)}
-                        onMouseLeave={() => setHoveredSegmentId(null)}
-                        onClick={() => {
-                          sounds.playClick();
-                          setSelectedSegmentId((prev) => (prev === seg.id ? null : seg.id));
-                        }}
-                      >
-                        <title>{`${seg.activityName}: ${formatMinutes(seg.totalMinutes)} (${seg.percentage}%)`}</title>
-                      </path>
-                    );
-                  })}
-                </svg>
+                {/* Active Session Colored Arcs */}
+                {weekClockData.segments.map((seg) => {
+                  const isSelected = selectedSegmentId === seg.id;
+                  const isHovered = hoveredSegmentId === seg.id;
+                  const isSameSubject = selectedSegment && selectedSegment.name.toLowerCase() === seg.name.toLowerCase();
+                  
+                  // Clean hover sizes - not too thick, just right
+                  const strokeW = isSelected ? 32 : isHovered ? 28 : isSameSubject ? 26 : 24;
 
-                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-center px-6">
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-stone-400 mb-1">
-                    THIS WEEK
+                  const pathData = describeArc(170, 170, 130, seg.startAngle, seg.endAngle);
+
+                  return (
+                    <path
+                      key={seg.id}
+                      d={pathData}
+                      fill="none"
+                      stroke={seg.color}
+                      strokeWidth={strokeW}
+                      strokeLinecap="butt"
+                      className="cursor-pointer transition-all duration-200 ease-in-out origin-center"
+                      style={{
+                        opacity: selectedSegmentId && !isSameSubject ? 0.2 : (isSelected || isHovered ? 1 : 0.9),
+                        transform: (isSelected || isHovered) ? 'scale(1.02)' : 'scale(1)',
+                        transformOrigin: '170px 170px'
+                      }}
+                      onMouseEnter={() => setHoveredSegmentId(seg.id)}
+                      onMouseLeave={() => setHoveredSegmentId(null)}
+                      onClick={() => {
+                        sounds.playClick();
+                        setSelectedSegmentId((prev) => (prev === seg.id ? null : seg.id));
+                      }}
+                    >
+                      <title>{`${seg.activityName} (${seg.dayLabel} ${seg.startTimeStr} – ${seg.endTimeStr}): ${formatMinutes(seg.minutes)}`}</title>
+                    </path>
+                  );
+                })}
+              </svg>
+
+              {/* Inside Clock Center: Display Week & Total Focus Time */}
+              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-center px-6">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-stone-400 mb-1">
+                  {formattedWeekLabel}
+                </span>
+                
+                <span className="text-3xl sm:text-4xl font-black font-sans tracking-tight text-[#0D1F17] dark:text-white my-1">
+                  {formatDonutCenterTime(weekClockData.totalMinutes)}
+                </span>
+                
+                <div className="flex items-center space-x-1.5 mt-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#10B981]" />
+                  <span className="text-[10px] font-semibold text-stone-500">
+                    {weekClockData.segments.length}{' '}
+                    {weekClockData.segments.length === 1 ? 'Session' : 'Sessions'}
                   </span>
-                  <span className="text-3xl sm:text-4xl font-black font-sans tracking-tight text-[#0D1F17] dark:text-white my-1">
-                    {formatDonutCenterTime(totalMinutes)}
-                  </span>
-                  <div className="flex items-center space-x-1.5 mt-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#10B981]" />
-                    <span className="text-[10px] font-semibold text-stone-500">
-                      {activeCount}{' '}
-                      {activeCount === 1 ? 'Session' : 'Sessions'}
-                    </span>
-                  </div>
                 </div>
               </div>
             </div>
-          )}
+          </div>
+        )}
 
-          {/* Empty sessions message for day mode if 0 sessions */}
-          {mode === 'day' && dayClockData.segments.length === 0 && (
-            <p className="text-center text-xs text-stone-400 max-w-sm mx-auto py-1">
-              No focus sessions recorded for this day yet. Completed Deep Focus and Stopwatch sessions will appear on this 24-hour clock.
-            </p>
-          )}
+        {/* Empty sessions message for day/week mode if 0 sessions */}
+        {mode === 'day' && dayClockData.segments.length === 0 && (
+          <p className="text-center text-xs text-stone-400 max-w-sm mx-auto py-1">
+            No focus sessions recorded for this day yet. Completed Deep Focus and Stopwatch sessions will appear on this 24-hour clock.
+          </p>
+        )}
+        {mode === 'week' && weekClockData.segments.length === 0 && (
+          <p className="text-center text-xs text-stone-400 max-w-sm mx-auto py-1">
+            No focus sessions recorded for this week yet. Completed Deep Focus and Stopwatch sessions will appear on this 7-day circular clock.
+          </p>
+        )}
 
           {/* 3. CLICKABLE SEGMENT DETAIL PANEL: Information ONLY about the selected segment */}
           {selectedSegment ? (
@@ -1128,7 +1272,7 @@ export const FocusTimeDistribution = ({
               <div className="text-center text-xs text-stone-500 dark:text-stone-400 font-medium py-1">
                 {mode === 'day'
                   ? '👆 Click any session arc on the 24-hour clock to view its timestamps and details.'
-                  : '👆 Click any segment on the donut chart to view its individual session timestamps and records.'}
+                  : '👆 Click any session arc on the 7-day circular clock to view its timestamps and details.'}
               </div>
 
               {/* Activity Chips Overview */}
@@ -1138,7 +1282,7 @@ export const FocusTimeDistribution = ({
                     key={act.name}
                     onClick={() => {
                       sounds.playClick();
-                      const targetSeg = (mode === 'day' ? dayClockData.segments : donutSegments).find(
+                      const targetSeg = (mode === 'day' ? dayClockData.segments : weekClockData.segments).find(
                         (s) => s.name.toLowerCase() === act.name.toLowerCase()
                       );
                       if (targetSeg) {
@@ -1166,7 +1310,6 @@ export const FocusTimeDistribution = ({
             </div>
           )}
         </div>
-      )}
     </div>
   );
 };
