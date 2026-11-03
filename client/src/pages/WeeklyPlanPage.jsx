@@ -30,7 +30,7 @@ import {
   getNextAvailableColor,
   syncSubjectColorsAcrossTimetable,
 } from '../utils/subjectColors.js';
-import { getStudyDayKey, getStudyDayDate, formatResetTimeDisplay, getWeekdayDateStr } from '../utils/dateUtils.js';
+import { getStudyDayKey, getStudyDayDate, formatResetTimeDisplay, getWeekdayDateStr, formatStudyDuration } from '../utils/dateUtils.js';
 import { sounds } from '../audio/soundEffects.js';
 import { api } from '../services/api.js';
 import { TaskDeleteConfirmModal } from '../components/TaskDeleteConfirmModal.jsx';
@@ -760,25 +760,75 @@ export const WeeklyPlanPage = ({
               </div>
 
               <div>
-                <div className="flex justify-between items-center text-xs font-bold text-[#576560] dark:text-[#8BA398] mb-1">
+                <div className="flex justify-between items-center text-xs font-bold text-[#576560] dark:text-[#8BA398] mb-1.5">
                   <span>Target Study Duration</span>
-                  <span className="font-mono text-[#1B3B2F] dark:text-[#A3D9C9]">{formDuration} mins</span>
+                  <span className="font-mono text-[#1B3B2F] dark:text-[#A3D9C9] font-bold">
+                    {formatStudyDuration(formDuration)}
+                  </span>
                 </div>
-                <input
-                  type="range"
-                  min="5"
-                  max="180"
-                  step="5"
-                  value={formDuration}
-                  onChange={(e) => setFormDuration(Number(e.target.value))}
-                  className="w-full accent-[#1B3B2F] cursor-pointer"
-                />
-                <div className="flex justify-between text-[10px] text-[#8A9791] font-mono mt-1">
-                  <span>5m</span>
-                  <span>25m</span>
-                  <span>45m</span>
-                  <span>90m</span>
-                  <span>180m</span>
+                <div className="relative pt-1 pb-6">
+                  <input
+                    type="range"
+                    min="5"
+                    max="180"
+                    step="5"
+                    value={formDuration}
+                    onChange={(e) => setFormDuration(Number(e.target.value))}
+                    className="w-full accent-[#1B3B2F] cursor-pointer block"
+                  />
+                  {/* Perfectly aligned tick marks and labels */}
+                  <div className="relative w-full h-5 mt-1 select-none">
+                    {[
+                      { val: 5, label: '5m' },
+                      { val: 25, label: '25m' },
+                      { val: 60, label: '60m' },
+                      { val: 120, label: '2h : 0m' },
+                      { val: 180, label: '3h : 0m' },
+                    ].map((tick, idx, arr) => {
+                      const percent = ((tick.val - 5) / (180 - 5)) * 100;
+                      const isFirst = idx === 0;
+                      const isLast = idx === arr.length - 1;
+                      return (
+                        <button
+                          key={tick.val}
+                          type="button"
+                          onClick={() => setFormDuration(tick.val)}
+                          className={`absolute flex flex-col cursor-pointer group transition-all ${
+                            isFirst ? 'items-start' : isLast ? 'items-end' : 'items-center'
+                          }`}
+                          style={{
+                            left: isFirst
+                              ? '0%'
+                              : isLast
+                              ? '100%'
+                              : `calc(8px + (100% - 16px) * ${percent / 100})`,
+                            transform: isFirst
+                              ? 'none'
+                              : isLast
+                              ? 'translateX(-100%)'
+                              : 'translateX(-50%)',
+                          }}
+                        >
+                          <div
+                            className={`w-0.5 h-1.5 rounded-full transition-colors ${
+                              formDuration === tick.val
+                                ? 'bg-[#1B3B2F] dark:bg-[#A3D9C9]'
+                                : 'bg-[#8A9791]/50 group-hover:bg-[#1B3B2F]'
+                            }`}
+                          />
+                          <span
+                            className={`text-[10px] font-mono mt-0.5 whitespace-nowrap transition-colors ${
+                              formDuration === tick.val
+                                ? 'text-[#1B3B2F] dark:text-[#A3D9C9] font-bold'
+                                : 'text-[#8A9791] group-hover:text-[#1B3B2F] dark:group-hover:text-[#A3D9C9]'
+                            }`}
+                          >
+                            {tick.label}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
 

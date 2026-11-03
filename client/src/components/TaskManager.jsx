@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Plus, Flame, Clock, CheckCircle, Circle, Trash2, Tag, ShieldAlert } from 'lucide-react';
 import { sounds } from '../audio/soundEffects.js';
 import { TaskDeleteConfirmModal } from './TaskDeleteConfirmModal.jsx';
+import { formatStudyDuration } from '../utils/dateUtils.js';
 
 const COLOR_PRESETS = [
   { name: 'Red (DSA & Algos)', color: '#ef4444' },
@@ -222,22 +223,65 @@ export const TaskManager = ({
 
               <div>
                 <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1">
-                  Custom Duration: {duration} Minutes
+                  Target Study Duration: {formatStudyDuration(duration)}
                 </label>
-                <input
-                  type="range"
-                  min="5"
-                  max="120"
-                  step="5"
-                  value={duration}
-                  onChange={(e) => setDuration(Number(e.target.value))}
-                  className="w-full accent-sky-500 cursor-pointer"
-                />
-                <div className="flex justify-between text-[11px] text-slate-500 font-mono mt-1">
-                  <span>5m</span>
-                  <span>25m (Standard)</span>
-                  <span>50m (Deep)</span>
-                  <span>120m</span>
+                <div className="relative pt-1 pb-6">
+                  <input
+                    type="range"
+                    min="5"
+                    max="120"
+                    step="5"
+                    value={duration}
+                    onChange={(e) => setDuration(Number(e.target.value))}
+                    className="w-full accent-sky-500 cursor-pointer block"
+                  />
+                  <div className="relative w-full h-5 mt-1 select-none">
+                    {[
+                      { val: 5, label: '5m' },
+                      { val: 25, label: '25m' },
+                      { val: 60, label: '60m' },
+                      { val: 120, label: '2h : 0m' },
+                    ].map((tick, idx, arr) => {
+                      const percent = ((tick.val - 5) / (120 - 5)) * 100;
+                      const isFirst = idx === 0;
+                      const isLast = idx === arr.length - 1;
+                      return (
+                        <button
+                          key={tick.val}
+                          type="button"
+                          onClick={() => setDuration(tick.val)}
+                          className={`absolute flex flex-col cursor-pointer group transition-all ${
+                            isFirst ? 'items-start' : isLast ? 'items-end' : 'items-center'
+                          }`}
+                          style={{
+                            left: isFirst
+                              ? '0%'
+                              : isLast
+                              ? '100%'
+                              : `calc(8px + (100% - 16px) * ${percent / 100})`,
+                            transform: isFirst
+                              ? 'none'
+                              : isLast
+                              ? 'translateX(-100%)'
+                              : 'translateX(-50%)',
+                          }}
+                        >
+                          <div
+                            className={`w-0.5 h-1.5 rounded-full transition-colors ${
+                              duration === tick.val ? 'bg-sky-400' : 'bg-slate-600 group-hover:bg-sky-400'
+                            }`}
+                          />
+                          <span
+                            className={`text-[10px] font-mono mt-0.5 whitespace-nowrap transition-colors ${
+                              duration === tick.val ? 'text-sky-400 font-bold' : 'text-slate-500 group-hover:text-slate-300'
+                            }`}
+                          >
+                            {tick.label}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
 

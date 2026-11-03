@@ -75,3 +75,17 @@ export const getWeekdayDateStr = (targetDayKey, date = new Date(), resetTime = '
   const day = String(baseDate.getUTCDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 };
+
+/**
+ * Formats duration in minutes into clean readable hours and minutes format.
+ * If minutes <= 60, shows as e.g. "5m", "25m", "60m".
+ * If minutes > 60, shows as e.g. "1h : 1m", "1h : 5m", "6h : 2m".
+ */
+export const formatStudyDuration = (totalMins = 0) => {
+  const m = Math.round(Number(totalMins) || 0);
+  if (m <= 0) return '0m';
+  if (m <= 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  const rem = m % 60;
+  return `${h}h : ${rem}m`;
+};

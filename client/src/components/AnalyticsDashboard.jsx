@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { sounds } from '../audio/soundEffects.js';
 import { api } from '../services/api.js';
+import { formatStudyDuration } from '../utils/dateUtils.js';
 
 export const AnalyticsDashboard = ({ user, onDataReload }) => {
   const [data, setData] = useState(null);
@@ -215,7 +216,7 @@ export const AnalyticsDashboard = ({ user, onDataReload }) => {
                 <div key={day.date} className="flex-1 flex flex-col items-center group relative h-full justify-end">
                   {/* Tooltip on hover */}
                   <div className="absolute -top-10 opacity-0 group-hover:opacity-100 transition-all bg-slate-800 text-[10px] text-slate-200 px-2 py-1 rounded shadow-lg border border-slate-700 pointer-events-none whitespace-nowrap z-20">
-                    {day.minutes} mins ({day.sessions} sessions)
+                    {formatStudyDuration(day.minutes)} ({day.completedTasks ?? 0}/{day.totalTasks ?? 0} tasks)
                   </div>
 
                   <div

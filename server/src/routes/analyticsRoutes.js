@@ -1,6 +1,7 @@
 import express from 'express';
 import { PomodoroSession } from '../models/PomodoroSession.js';
 import { Task } from '../models/Task.js';
+import { DailyTaskProgress } from '../models/DailyTaskProgress.js';
 import { requireAuth } from '../middleware/auth.js';
 import { getPeerBenchmark } from '../utils/benchmarkData.js';
 import { formatDateStr, getStudyDayDate } from '../utils/streakEngine.js';
@@ -27,6 +28,15 @@ router.get('/dashboard', requireAuth, async (req, res) => {
     const allSessions = await PomodoroSession.find({ userId }).sort({ startTime: 1 });
     const completedSessions = allSessions.filter((s) => s.status === 'completed');
     const tasks = await Task.find({ userId });
+    const dailyProgressDocs = await DailyTaskProgress.find({ userId });
+
+    const dailyProgressMap = {};
+    (dailyProgressDocs || []).forEach((doc) => {
+      if (doc.dateStr) {
+        dailyProgressMap[doc.dateStr] = dailyProgressMap[doc.dateStr] || [];
+        dailyProgressMap[doc.dateStr].push(doc);
+      }
+    });
 
     // Subject color mapping from timetable for cross-system consistency
     const subjectColorMap = {};
@@ -158,8 +168,7 @@ router.get('/dashboard', requireAuth, async (req, res) => {
       pauseInsight = `Complete a few more sessions across different days of the week to unlock deeper behavioral friction telemetry!`;
     }
 
-    // 3. Time Series Data (Daily based on study-day boundary)
-    const last14Days = [];
+    // 3. Time Series & Activity Maps Data
     const dateMap = {};
 
     allSessions.forEach((s) => {
@@ -173,27 +182,6 @@ router.get('/dashboard', requireAuth, async (req, res) => {
       dateMap[d].pauses += s.pauseCount || 0;
       dateMap[d].coins += s.coinsEarned || 0;
     });
-
-    const now = new Date();
-    for (let i = 13; i >= 0; i--) {
-      const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
-      const str = getStudyDayDate(d, resetTime, tzOffset);
-      const dayName = new Date(str + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' });
-      const stats = dateMap[str] || { minutes: 0, sessions: 0, pauses: 0, coins: 0 };
-
-      // Prevent duplicate days in series if boundary calculation overlaps
-      if (!last14Days.some((entry) => entry.date === str)) {
-        last14Days.push({
-          date: str,
-          label: `${dayName} ${str.split('-')[2]}`,
-          minutes: Math.round(stats.minutes),
-          hours: Math.round((stats.minutes / 60) * 10) / 10,
-          sessions: stats.sessions,
-          pauses: stats.pauses,
-          coins: stats.coins,
-        });
-      }
-    }
 
     // 4. Completed Quests & Full Activity Map
     const completedQuestsDateMap = {};
@@ -209,6 +197,76 @@ router.get('/dashboard', requireAuth, async (req, res) => {
 
     const totalQuestsCompleted = Math.max(totalTimetableQuestsCompleted, completedSessions.length);
 
+    // Calculate completed vs total scheduled tasks for any given study date
+    const getTaskStatsForDate = (dateStr) => {
+      const parts = dateStr.split('-').map(Number);
+      const dateObj = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2], 12));
+      const dowIdx = dateObj.getUTCDay();
+      const DOW_KEYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+      const weekdayKey = DOW_KEYS[dowIdx];
+
+      const scheduled = req.user.weeklyTimetable?.[weekdayKey] || [];
+      const scheduledCount = scheduled.length;
+
+      const progs = dailyProgressMap[dateStr] || [];
+      let completedCount = 0;
+
+      const completedNames = new Set();
+      scheduled.forEach((sub) => {
+        const norm = (sub.name || '').trim().toLowerCase();
+        const hasDate = Array.isArray(sub.completedDates) && sub.completedDates.includes(dateStr);
+        const hasProgDone = progs.some((p) => p.normalizedName === norm && p.isCompleted);
+        if (hasDate || hasProgDone) {
+          completedCount++;
+          completedNames.add(norm);
+        }
+      });
+
+      progs.forEach((p) => {
+        if (p.isCompleted && !completedNames.has(p.normalizedName)) {
+          completedCount++;
+        }
+      });
+
+      if (completedQuestsDateMap[dateStr] && completedQuestsDateMap[dateStr] > completedCount) {
+        completedCount = completedQuestsDateMap[dateStr];
+      }
+
+      const sessCount = dateMap[dateStr]?.sessions || 0;
+      if (completedCount === 0 && sessCount > 0) {
+        completedCount = sessCount;
+      }
+
+      const totalCount = Math.max(scheduledCount, completedCount);
+      return { completedTasks: completedCount, totalTasks: totalCount };
+    };
+
+    // Last 14 Days Series
+    const last14Days = [];
+    const now = new Date();
+    for (let i = 13; i >= 0; i--) {
+      const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+      const str = getStudyDayDate(d, resetTime, tzOffset);
+      const dayName = new Date(str + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' });
+      const stats = dateMap[str] || { minutes: 0, sessions: 0, pauses: 0, coins: 0 };
+      const taskStats = getTaskStatsForDate(str);
+
+      // Prevent duplicate days in series if boundary calculation overlaps
+      if (!last14Days.some((entry) => entry.date === str)) {
+        last14Days.push({
+          date: str,
+          label: `${dayName} ${str.split('-')[2]}`,
+          minutes: Math.round(stats.minutes),
+          hours: Math.round((stats.minutes / 60) * 10) / 10,
+          sessions: stats.sessions,
+          pauses: stats.pauses,
+          coins: stats.coins,
+          completedTasks: taskStats.completedTasks,
+          totalTasks: taskStats.totalTasks,
+        });
+      }
+    }
+
     // Full Activity Map for 365-day calendar
     const streakDates = Array.isArray(req.user.streaks?.completedDates) ? req.user.streaks.completedDates : [];
     const allActiveDates = new Set([
@@ -221,6 +279,7 @@ router.get('/dashboard', requireAuth, async (req, res) => {
       const mins = Math.round(dateMap[d]?.minutes || 0);
       const sess = dateMap[d]?.sessions || 0;
       const quests = completedQuestsDateMap[d] || (sess > 0 ? sess : 0) || (streakDates.includes(d) ? 1 : 0);
+      const taskStats = getTaskStatsForDate(d);
       let intensity = 0;
       if (mins >= 120) intensity = 4;
       else if (mins >= 60) intensity = 3;
@@ -232,6 +291,8 @@ router.get('/dashboard', requireAuth, async (req, res) => {
         minutes: mins || (quests > 0 ? 25 : 0),
         sessions: sess || (quests > 0 ? 1 : 0),
         completedQuests: quests,
+        completedTasks: taskStats.completedTasks,
+        totalTasks: taskStats.totalTasks,
         intensity,
       };
     });

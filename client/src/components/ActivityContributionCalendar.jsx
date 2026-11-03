@@ -1,17 +1,12 @@
-import React, { useState, useRef, useEffect, useMemo,mins  } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Calendar, ShieldCheck, Info} from 'lucide-react';
-import { getStudyDayDate } from '../utils/dateUtils.js';
+import { getStudyDayDate, formatStudyDuration } from '../utils/dateUtils.js';
 
 /**
- * Formats minutes into human-readable text (e.g. "2h 35m", "45m", "0m")
+ * Formats minutes into human-readable text (e.g. "2h : 35m", "45m", "0m")
  */
 function formatMinutes(mins = 0) {
-  if (!mins || mins <= 0) return '0m';
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  if (h > 0 && m > 0) return `${h}h ${m}m`;
-  if (h > 0) return `${h}h`;
-  return `${m}m`;
+  return formatStudyDuration(mins);
 }
 
 /**
@@ -42,6 +37,8 @@ export const ActivityContributionCalendar = ({
             minutes: mins,
             sessions: sessions,
             completedQuests: quests,
+            completedTasks: cell.completedTasks,
+            totalTasks: cell.totalTasks,
             intensity:
               cell.intensity !== undefined
                 ? cell.intensity
@@ -105,7 +102,11 @@ export const ActivityContributionCalendar = ({
         minutes: 0,
         sessions: 0,
         completedQuests: 0,
+        completedTasks: 0,
+        totalTasks: 0,
       };
+
+      const cellMins = record.minutes || 0;
 
       // Intensity based on real focus minutes, completed quests, and streak records:
       // 0: 0m
@@ -114,27 +115,50 @@ export const ActivityContributionCalendar = ({
       // 3: 60 - 119m
       // 4: 120m+
       let intensity = record.intensity !== undefined ? record.intensity : 0;
-      if (mins >= 120) intensity = Math.max(intensity, 4);
-      else if (mins >= 60) intensity = Math.max(intensity, 3);
-      else if (mins >= 30) intensity = Math.max(intensity, 2);
-      else if (mins > 0 || (record.completedQuests || 0) > 0 || (record.sessions || 0) > 0) intensity = Math.max(intensity, 1);
+      if (cellMins >= 120) intensity = Math.max(intensity, 4);
+      else if (cellMins >= 60) intensity = Math.max(intensity, 3);
+      else if (cellMins >= 30) intensity = Math.max(intensity, 2);
+      else if (cellMins > 0 || (record.completedQuests || 0) > 0 || (record.sessions || 0) > 0) intensity = Math.max(intensity, 1);
 
-      if (mins > 0 || intensity > 0) {
-        yearMinutes += mins;
+      if (cellMins > 0 || intensity > 0) {
+        yearMinutes += cellMins;
         yearDays += 1;
       }
 
       // Check if user has rest day enabled for this weekday
       const isRestDay = Boolean(user?.restDay?.enabled && user?.restDay?.dayOfWeek === dayOfWeek);
 
+      // Compute task stats fallback if record doesn't have them
+      let dayCompletedTasks = record.completedTasks;
+      let dayTotalTasks = record.totalTasks;
+      if (dayCompletedTasks === undefined || dayTotalTasks === undefined) {
+        const weekdayOrder = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+        const weekdayKey = weekdayOrder[dayOfWeek];
+        const scheduled = user?.weeklyTimetable?.[weekdayKey] || [];
+        const scheduledCount = scheduled.length;
+        let compCount = 0;
+        scheduled.forEach((sub) => {
+          if (Array.isArray(sub.completedDates) && sub.completedDates.includes(dateStr)) {
+            compCount++;
+          }
+        });
+        if (compCount === 0 && (record.completedQuests || record.sessions)) {
+          compCount = record.completedQuests || record.sessions || 0;
+        }
+        dayCompletedTasks = compCount;
+        dayTotalTasks = Math.max(scheduledCount, compCount);
+      }
+
       days.push({
         date: dateStr,
         dateObj: d,
         dayOfWeek,
         month: d.getMonth(),
-        minutes: mins,
+        minutes: cellMins,
         sessions: record.sessions || 0,
         completedQuests: record.completedQuests || 0,
+        completedTasks: dayCompletedTasks,
+        totalTasks: dayTotalTasks,
         intensity,
         isRestDay,
       });
@@ -369,13 +393,15 @@ export const ActivityContributionCalendar = ({
               <div className="flex items-center justify-between text-[11px]">
                 <span className="text-[#A3D9C9] font-medium">Focus Duration:</span>
                 <span className="font-mono font-bold text-white">
-                  {hoveredCell.minutes > 0 ? formatMinutes(hoveredCell.minutes) : 'No focus'}
+                  {hoveredCell.minutes > 0 ? formatStudyDuration(hoveredCell.minutes) : 'No focus'}
                 </span>
               </div>
               <div className="flex items-center justify-between text-[11px]">
-                <span className="text-[#A3D9C9] font-medium">Completed Quests:</span>
+                <span className="text-[#A3D9C9] font-medium">Completed Tasks:</span>
                 <span className="font-mono font-bold text-white">
-                  {hoveredCell.completedQuests || hoveredCell.sessions || 0}
+                  {hoveredCell.completedTasks !== undefined && hoveredCell.totalTasks !== undefined
+                    ? `${hoveredCell.completedTasks}/${hoveredCell.totalTasks}`
+                    : `${hoveredCell.completedQuests || hoveredCell.sessions || 0}/${hoveredCell.totalTasks || hoveredCell.completedQuests || hoveredCell.sessions || 0}`}
                 </span>
               </div>
               {hoveredCell.isRestDay && (

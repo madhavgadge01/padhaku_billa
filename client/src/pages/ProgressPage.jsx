@@ -10,7 +10,7 @@ import { api } from '../services/api.js';
 import { FocusLevelCard } from '../components/FocusLevelCard.jsx';
 import { ActivityContributionCalendar } from '../components/ActivityContributionCalendar.jsx';
 import { FocusTimeDistribution } from '../components/FocusTimeDistribution.jsx';
-import { formatResetTimeDisplay, getStudyDayDate } from '../utils/dateUtils.js';
+import { formatResetTimeDisplay, getStudyDayDate, formatStudyDuration } from '../utils/dateUtils.js';
 
 /**
  * Helper to format duration in minutes to e.g. "2h 35m", "45m", "0m"
@@ -39,6 +39,36 @@ function formatDailyAverage(mins = 0) {
 export const ProgressPage = ({ user, onReload }) => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [selectedBarDate, setSelectedBarDate] = useState(null);
+
+  const getDayTaskStats = (day) => {
+    if (day && day.completedTasks !== undefined && day.totalTasks !== undefined) {
+      return { completed: day.completedTasks, total: day.totalTasks };
+    }
+    if (!day || !day.date) return { completed: 0, total: 0 };
+    const parts = day.date.split('-').map(Number);
+    const dateObj = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2], 12));
+    const dowIdx = dateObj.getUTCDay();
+    const DOW_KEYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    const weekdayKey = DOW_KEYS[dowIdx];
+
+    const timetable = user?.weeklyTimetable || {};
+    const scheduled = timetable[weekdayKey] || [];
+    const scheduledCount = scheduled.length;
+
+    let compCount = 0;
+    scheduled.forEach((sub) => {
+      if (Array.isArray(sub.completedDates) && sub.completedDates.includes(day.date)) {
+        compCount++;
+      }
+    });
+
+    if (compCount === 0 && day.sessions > 0) {
+      compCount = day.sessions;
+    }
+    const totCount = Math.max(scheduledCount, compCount);
+    return { completed: compCount, total: totCount };
+  };
 
   const fetchAnalytics = async () => {
     try {
@@ -202,21 +232,36 @@ export const ProgressPage = ({ user, onReload }) => {
           
           </div>
           <span className="text-xs font-mono font-bold text-[#1B3B2F] dark:text-[#A3D9C9]">
-            Peak: {maxMinutes} mins
+            Peak: {formatStudyDuration(maxMinutes)}
           </span>
         </div>
 
         <div className="h-44 flex items-end justify-between space-x-2 pt-6 pb-2">
           {dailySeries.map((day) => {
             const heightPercent = maxMinutes > 0 ? (day.minutes / maxMinutes) * 100 : 0;
+            const isSelected = selectedBarDate === day.date;
+            const { completed: compTasks, total: totTasks } = getDayTaskStats(day);
+
             return (
-              <div key={day.date} className="flex-1 flex flex-col items-center group relative h-full justify-end">
-                {/* Tooltip on hover */}
-                <div className="absolute -top-10 opacity-0 group-hover:opacity-100 transition-all bg-[#1B3B2F] text-white text-[10px] px-2 py-1 rounded-xl shadow pointer-events-none whitespace-nowrap z-20">
-                  {day.minutes}m ({day.sessions} sessions)
+              <div
+                key={day.date}
+                onClick={() => setSelectedBarDate((prev) => (prev === day.date ? null : day.date))}
+                className="flex-1 flex flex-col items-center group relative h-full justify-end cursor-pointer"
+              >
+                {/* Tooltip on hover or click */}
+                <div
+                  className={`absolute -top-10 transition-all bg-[#1B3B2F] text-white text-[10px] px-2.5 py-1 rounded-xl shadow-lg pointer-events-none whitespace-nowrap z-20 font-mono ${
+                    isSelected ? 'opacity-100 scale-100' : 'opacity-0 group-hover:opacity-100'
+                  }`}
+                >
+                  {formatStudyDuration(day.minutes)} ({compTasks}/{totTasks} tasks)
                 </div>
                 <div
-                  className="w-full bg-[#1B3B2F] dark:bg-[#38746A] hover:bg-[#D97724] dark:hover:bg-[#F59E0B] rounded-t-xl transition-all duration-300"
+                  className={`w-full rounded-t-xl transition-all duration-300 ${
+                    isSelected
+                      ? 'bg-[#D97724] dark:bg-[#F59E0B]'
+                      : 'bg-[#1B3B2F] dark:bg-[#38746A] hover:bg-[#D97724] dark:hover:bg-[#F59E0B]'
+                  }`}
                   style={{ height: `${Math.max(4, heightPercent)}%` }}
                 ></div>
                 <span className="text-[9px] text-[#8A9791] mt-1.5 font-mono truncate w-full text-center">
