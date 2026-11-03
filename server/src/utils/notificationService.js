@@ -116,9 +116,10 @@ export async function scheduleSessionNotification(sessionId, userId, taskName, c
     }
   };
 
-  if (delay <= 1000) {
-    // If delay is <= 1s, run immediately
-    triggerNotification();
+  if (delay <= 5000) {
+    // If delay is <= 5s, do not dispatch an instantaneous push notification (avoids false immediate completion alerts on start/resume)
+    console.log(`[Notification Service] Skipping background push notification for ${sessionDocId} because delay is <= 5s (${Math.round(delay / 1000)}s)`);
+    return;
   } else {
     // Schedule timeout immediately
     const timer = setTimeout(triggerNotification, delay);

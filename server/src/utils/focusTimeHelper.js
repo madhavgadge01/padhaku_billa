@@ -39,7 +39,7 @@ export async function reconcileOrphanedSessions(userId) {
     const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
     const orphaned = await PomodoroSession.find({
       userId,
-      status: { $in: ['in-progress', 'paused'] },
+      status: 'in-progress',
       $or: [
         { lastHeartbeatAt: { $lt: twoMinutesAgo } },
         { lastHeartbeatAt: null, updatedAt: { $lt: twoMinutesAgo } },
@@ -80,7 +80,7 @@ export async function reconcileAllOrphanedSessions() {
   try {
     const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
     const orphaned = await PomodoroSession.find({
-      status: { $in: ['in-progress', 'paused'] },
+      status: 'in-progress',
       $or: [
         { lastHeartbeatAt: { $lt: twoMinutesAgo } },
         { lastHeartbeatAt: null, updatedAt: { $lt: twoMinutesAgo } },

@@ -1,5 +1,5 @@
 //  const API_BASE = 'http://localhost:5001/api';
-  const API_BASE = 'https://tell-profession-reverse-optimum.trycloudflare.com/api';
+export const API_BASE = 'https://tell-profession-reverse-optimum.trycloudflare.com/api';
 const getHeaders = () => {
   const token = localStorage.getItem('lifelevel_token');
   return {
@@ -167,10 +167,11 @@ export const api = {
       body: JSON.stringify(payload),
     }).then(handleResponse),
 
-  resumeSession: (sessionId) =>
+  resumeSession: (sessionId, payload = {}) =>
     fetch(`${API_BASE}/pomodoro/${sessionId}/resume`, {
       method: 'POST',
       headers: getHeaders(),
+      body: JSON.stringify(payload),
     }).then(handleResponse),
 
   completeSession: (sessionId) =>

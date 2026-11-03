@@ -29,7 +29,7 @@ import { FocusActionConfirmModal } from '../components/FocusActionConfirmModal.j
 import { getSubjectColor } from '../utils/subjectColors.js';
 import { getStudyDayKey, getStudyDayDate, formatResetTimeDisplay } from '../utils/dateUtils.js';
 import { sounds } from '../audio/soundEffects.js';
-import { api } from '../services/api.js';
+import { api, API_BASE } from '../services/api.js';
 import {
   getPushNotificationStatus,
   subscribeToPushNotifications,
@@ -644,7 +644,7 @@ export const FocusPage = ({
         closing: isClosing,
       });
 
-      const url = `https://tell-profession-reverse-optimum.trycloudflare.com/api/pomodoro/${currId}/checkpoint?token=${encodeURIComponent(token)}`;
+      const url = `${API_BASE}/pomodoro/${currId}/checkpoint?token=${encodeURIComponent(token)}`;
 
       if (navigator.sendBeacon) {
         const blob = new Blob([payload], { type: 'application/json' });
@@ -680,7 +680,7 @@ export const FocusPage = ({
     };
   }, []);
 
-  // Stop alarm and clean up timer on component unmount
+  // Stop alarm and cleanly freeze running timer on component unmount (e.g. user navigates away or presses back)
   useEffect(() => {
     return () => {
       sounds.stopAlarm();
@@ -691,6 +691,52 @@ export const FocusPage = ({
       if (countdownTimerRef.current) {
         clearInterval(countdownTimerRef.current);
         countdownTimerRef.current = null;
+      }
+
+      // If timer was actively running when user navigated away, freeze it safely as paused
+      // This prevents the timer from falsely draining to 00:00 in background and awarding auto-completion coins
+      if (isRunningRef.current && !isPausedRef.current) {
+        const now = Date.now();
+        const segmentElapsed = activeSegmentStartRef.current
+          ? Math.max(0, Math.floor((now - activeSegmentStartRef.current) / 1000))
+          : 0;
+        const maxGoal = totalSecondsRef.current || (customMinutesRef.current * 60) || 1500;
+        const currentTotal = Math.min(maxGoal, (baseAccumulatedRef.current || 0) + segmentElapsed);
+        const currentInterval = (baseIntervalRef.current || 0) + segmentElapsed;
+        const currentRemaining = Math.max(0, maxGoal - currentTotal);
+
+        isRunningRef.current = false;
+        isPausedRef.current = true;
+        sessionEndTimestampRef.current = null;
+        activeSegmentStartRef.current = null;
+
+        try {
+          const raw = localStorage.getItem(TIMER_STORAGE_KEY);
+          const prev = raw ? JSON.parse(raw) : {};
+          localStorage.setItem(
+            TIMER_STORAGE_KEY,
+            JSON.stringify({
+              ...prev,
+              isRunning: false,
+              isPaused: true,
+              sessionEndTimestamp: null,
+              activeSegmentStartTimestamp: null,
+              baseAccumulatedSeconds: currentTotal,
+              baseIntervalSeconds: currentInterval,
+              timeLeft: currentRemaining,
+              updatedAt: now,
+            })
+          );
+        } catch (e) {}
+
+        const currId = sessionIdRef.current;
+        if (currId) {
+          api.pauseSession(currId, {
+            intervalSeconds: currentInterval,
+            actualSeconds: currentTotal,
+            isEarlyBreakConfirmed: false,
+          }).catch(() => {});
+        }
       }
     };
   }, []);
@@ -718,71 +764,75 @@ export const FocusPage = ({
           });
 
           if (match) {
-            setSessionId(match._id);
-            sessionIdRef.current = match._id;
             const acc = match.actualSeconds || match.accumulatedSeconds || 0;
-            accumulatedElapsedRef.current = acc;
-            setAccumulatedSeconds(acc);
-
-            // Authoritative session goal seconds:
-            // Prefer session's totalGoalSeconds or durationMinutes*60, falling back to local totalSecondsRef or default
             const sessionGoalSecs =
               match.totalGoalSeconds ||
               (match.durationMinutes ? match.durationMinutes * 60 : (totalSecondsRef.current || defaultGoalSecs));
             const sessionDurationMins = match.durationMinutes || Math.round(sessionGoalSecs / 60);
-
-            // Remaining seconds toward goal
             const remSecs = Math.max(0, sessionGoalSecs - acc);
-            setTimeLeft(remSecs);
-            setTotalSeconds(sessionGoalSecs);
-            totalSecondsRef.current = sessionGoalSecs;
-            setCustomMinutes(sessionDurationMins);
-            customMinutesRef.current = sessionDurationMins;
-            userHasCustomizedDurationRef.current = true;
 
-            // Recovered sessions are restored safely as paused ready to resume
-            setIsRunning(false);
-            setIsPaused(true);
-            isRunningRef.current = false;
-            isPausedRef.current = true;
-            setPetFocusState('idle');
-            // Every Resume starts a new 25-minute interval counter
-            intervalElapsedRef.current = 0;
-            setIntervalSeconds(0);
+            // Only restore this session if it has genuine uncompleted seconds remaining!
+            if (remSecs > 0) {
+              setSessionId(match._id);
+              sessionIdRef.current = match._id;
+              accumulatedElapsedRef.current = acc;
+              setAccumulatedSeconds(acc);
 
-            syncTimerToStorage({
-              sessionId: match._id,
-              totalSeconds: sessionGoalSecs,
-              customMinutes: sessionDurationMins,
-              timeLeft: remSecs,
-              baseAccumulatedSeconds: acc,
-              baseIntervalSeconds: 0,
-              isRunning: false,
-              isPaused: true,
-            });
-            return;
+              setTimeLeft(remSecs);
+              setTotalSeconds(sessionGoalSecs);
+              totalSecondsRef.current = sessionGoalSecs;
+              setCustomMinutes(sessionDurationMins);
+              customMinutesRef.current = sessionDurationMins;
+              userHasCustomizedDurationRef.current = true;
+
+              // Recovered sessions are restored safely as paused ready to resume
+              setIsRunning(false);
+              setIsPaused(true);
+              isRunningRef.current = false;
+              isPausedRef.current = true;
+              setPetFocusState('idle');
+              intervalElapsedRef.current = 0;
+              setIntervalSeconds(0);
+
+              syncTimerToStorage({
+                sessionId: match._id,
+                totalSeconds: sessionGoalSecs,
+                customMinutes: sessionDurationMins,
+                timeLeft: remSecs,
+                baseAccumulatedSeconds: acc,
+                baseIntervalSeconds: 0,
+                isRunning: false,
+                isPaused: true,
+              });
+              return;
+            }
           }
         }
 
-        // If no active session found on backend:
-        // Do not reset if timer is currently running, paused, has an active session, or user has customized duration
-        if (isRunningRef.current || isPausedRef.current || sessionIdRef.current || userHasCustomizedDurationRef.current) {
-          return;
-        }
-
+        // If no active session with remaining time found on backend:
         // Check if backend returned latest unified DailyTaskProgress for this subject
+        let liveStartingSecs = defaultGoalSecs;
         let liveStartingMins = initialStartingMins;
         if (res?.dailyProgress && res.dailyProgress[subName]) {
           const dp = res.dailyProgress[subName];
-          if (typeof dp.remainingMinutes === 'number' && dp.remainingMinutes > 0) {
+          if (typeof dp.remainingSeconds === 'number' && dp.remainingSeconds > 0) {
+            liveStartingSecs = dp.remainingSeconds;
+            liveStartingMins = Math.ceil(dp.remainingSeconds / 60);
+          } else if (typeof dp.remainingMinutes === 'number' && dp.remainingMinutes > 0) {
             liveStartingMins = dp.remainingMinutes;
+            liveStartingSecs = dp.remainingMinutes * 60;
+          } else if (dp.isCompleted) {
+            // Already finished today! Reset to full goal for voluntary bonus focus
+            liveStartingMins = effMins;
+            liveStartingSecs = effMins * 60;
           }
         }
-        const liveGoalSecs = liveStartingMins * 60;
 
-        setTotalSeconds(liveGoalSecs);
-        totalSecondsRef.current = liveGoalSecs;
-        setTimeLeft(liveGoalSecs);
+        setSessionId(null);
+        sessionIdRef.current = null;
+        setTotalSeconds(liveStartingSecs);
+        totalSecondsRef.current = liveStartingSecs;
+        setTimeLeft(liveStartingSecs);
         setCustomMinutes(liveStartingMins);
         customMinutesRef.current = liveStartingMins;
         accumulatedElapsedRef.current = 0;
@@ -791,26 +841,43 @@ export const FocusPage = ({
         setIntervalSeconds(0);
         setIsRunning(false);
         setIsPaused(false);
+        isRunningRef.current = false;
+        isPausedRef.current = false;
+        userHasCustomizedDurationRef.current = false;
         setPetFocusState('idle');
       })
       .catch(() => {
-        if (isRunningRef.current || isPausedRef.current || sessionIdRef.current || userHasCustomizedDurationRef.current) {
-          return;
-        }
+        setSessionId(null);
+        sessionIdRef.current = null;
         setTotalSeconds(defaultGoalSecs);
         totalSecondsRef.current = defaultGoalSecs;
         setTimeLeft(defaultGoalSecs);
         setCustomMinutes(initialStartingMins);
         customMinutesRef.current = initialStartingMins;
+        accumulatedElapsedRef.current = 0;
+        setAccumulatedSeconds(0);
+        intervalElapsedRef.current = 0;
+        setIntervalSeconds(0);
+        setIsRunning(false);
+        setIsPaused(false);
+        isRunningRef.current = false;
+        isPausedRef.current = false;
+        userHasCustomizedDurationRef.current = false;
+        setPetFocusState('idle');
       });
   };
 
   // Sync initialSubject prop if passed from parent
   useEffect(() => {
     if (initialSubject && !isRunningRef.current) {
-      setSelectedSubject(initialSubject);
-      setSelectedColor(initialSubject.color || '#3B82F6');
-      if (!isPausedRef.current && !sessionIdRef.current && !userHasCustomizedDurationRef.current) {
+      const isDifferent =
+        !selectedSubject ||
+        (initialSubject.id && selectedSubject.id !== initialSubject.id) ||
+        (initialSubject.name && selectedSubject.name?.toLowerCase() !== initialSubject.name?.toLowerCase());
+
+      if (isDifferent) {
+        setSelectedSubject(initialSubject);
+        setSelectedColor(initialSubject.color || '#3B82F6');
         restoreSubjectProgress(initialSubject);
       }
     }
@@ -1391,6 +1458,77 @@ export const FocusPage = ({
     const endTs = sessionEndTimestampRef.current;
     if (!endTs) return;
 
+    // If in Pomodoro Focus phase, check interval completion FIRST before draining past interval
+    if (focusStyleRef.current === 'pomodoro' && pomodoroPhaseRef.current === 'focus') {
+      const pEndTs = phaseEndTimestampRef.current;
+      if (pEndTs) {
+        const phaseRemaining = Math.max(0, Math.ceil((pEndTs - now) / 1000));
+        setPhaseTimeLeft(phaseRemaining);
+
+        if (phaseRemaining === 0 && !pomoAlertActiveRef.current) {
+          pomoAlertActiveRef.current = true;
+          // Interval has ended! Cap focus segment at pEndTs (25m), do not count idle/away time beyond pEndTs as focus time!
+          const effectiveNow = Math.min(now, pEndTs);
+          const segmentElapsed = activeSegmentStartRef.current
+            ? Math.max(0, Math.floor((effectiveNow - activeSegmentStartRef.current) / 1000))
+            : 0;
+          const maxGoal = totalSecondsRef.current || (customMinutesRef.current * 60) || 1500;
+          const currentTotal = Math.min(maxGoal, (baseAccumulatedRef.current || 0) + segmentElapsed);
+          accumulatedElapsedRef.current = currentTotal;
+          setAccumulatedSeconds(currentTotal);
+          baseAccumulatedRef.current = currentTotal;
+
+          const currentInterval = (baseIntervalRef.current || 0) + segmentElapsed;
+          intervalElapsedRef.current = currentInterval;
+          setIntervalSeconds(currentInterval);
+          baseIntervalRef.current = currentInterval;
+
+          const remainingSecs = Math.max(0, maxGoal - currentTotal);
+          setTimeLeft(remainingSecs);
+
+          sessionEndTimestampRef.current = null;
+          activeSegmentStartRef.current = null;
+          isRunningRef.current = false;
+          isPausedRef.current = true;
+          setIsRunning(false);
+          setIsPaused(true);
+          setPetFocusState('idle');
+
+          const currId = sessionIdRef.current || sessionId;
+          if (currId) {
+            api.pauseSession(currId, {
+              intervalSeconds: currentInterval,
+              actualSeconds: currentTotal,
+              isEarlyBreakConfirmed: false,
+            }).catch(() => {});
+          }
+
+          syncTimerToStorage({
+            isRunning: false,
+            isPaused: true,
+            sessionEndTimestamp: null,
+            activeSegmentStartTimestamp: null,
+            baseAccumulatedSeconds: currentTotal,
+            baseIntervalSeconds: currentInterval,
+            timeLeft: remainingSecs,
+            pomodoroPhase: 'focus',
+            phaseTimeLeft: 0,
+          });
+
+          // Check if entire daily quest goal was achieved right at interval boundary
+          if (remainingSecs === 0 && !isCompletingRef.current) {
+            if (handleCompleteRef.current) {
+              handleCompleteRef.current();
+            }
+          } else {
+            sounds.startAlarm?.();
+            setPomodoroAlert({ phase: 'focus', stage: 'ringing' });
+          }
+          return;
+        }
+      }
+    }
+
     const remaining = Math.max(0, Math.ceil((endTs - now) / 1000));
     setTimeLeft(remaining);
 
@@ -1406,30 +1544,6 @@ export const FocusPage = ({
     const currentInterval = (baseIntervalRef.current || 0) + segmentElapsed;
     intervalElapsedRef.current = currentInterval;
     setIntervalSeconds(currentInterval);
-
-    // If in Pomodoro Focus phase, check interval completion
-    if (focusStyleRef.current === 'pomodoro' && pomodoroPhaseRef.current === 'focus') {
-      const pEndTs = phaseEndTimestampRef.current;
-      if (pEndTs) {
-        const phaseRemaining = Math.max(0, Math.ceil((pEndTs - now) / 1000));
-        setPhaseTimeLeft(phaseRemaining);
-
-        if (phaseRemaining === 0 && remaining > 0 && !pomoAlertActiveRef.current) {
-          pomoAlertActiveRef.current = true;
-          if (executePauseSessionRef.current) {
-            executePauseSessionRef.current(false);
-          } else {
-            isRunningRef.current = false;
-            isPausedRef.current = true;
-            setIsRunning(false);
-            setIsPaused(true);
-          }
-          sounds.startAlarm?.();
-          setPomodoroAlert({ phase: 'focus', stage: 'ringing' });
-          return;
-        }
-      }
-    }
 
     if (remaining === 0 && !isCompletingRef.current) {
       if (handleCompleteRef.current) {
@@ -1607,7 +1721,64 @@ export const FocusPage = ({
 
       const now = Date.now();
       if (data.isRunning && !data.isPaused && data.sessionEndTimestamp) {
-        if (now >= data.sessionEndTimestamp) {
+        // If in Pomodoro mode, check if a focus interval concluded while away
+        if (data.focusStyle === 'pomodoro' && data.pomodoroPhase === 'focus' && data.phaseEndTimestamp && now >= data.phaseEndTimestamp) {
+          const intervalSecs = data.phaseTotalSeconds || (data.pomodoroFocusMins ? data.pomodoroFocusMins * 60 : 1500);
+          const totalGoal = data.totalSeconds || 1500;
+          const newAcc = Math.min(totalGoal, (data.baseAccumulatedSeconds || 0) + intervalSecs);
+          const rem = Math.max(0, totalGoal - newAcc);
+
+          if (data.sessionId) {
+            sessionIdRef.current = data.sessionId;
+            setSessionId(data.sessionId);
+          }
+          if (data.customMinutes) {
+            setCustomMinutes(data.customMinutes);
+            customMinutesRef.current = data.customMinutes;
+          }
+          setTotalSeconds(totalGoal);
+          totalSecondsRef.current = totalGoal;
+          setAccumulatedSeconds(newAcc);
+          accumulatedElapsedRef.current = newAcc;
+          baseAccumulatedRef.current = newAcc;
+          setTimeLeft(rem);
+
+          isRunningRef.current = false;
+          isPausedRef.current = true;
+          setIsRunning(false);
+          setIsPaused(true);
+          sessionEndTimestampRef.current = null;
+          activeSegmentStartRef.current = null;
+
+          if (data.sessionId) {
+            api.pauseSession(data.sessionId, {
+              intervalSeconds: intervalSecs,
+              actualSeconds: newAcc,
+              isEarlyBreakConfirmed: false,
+            }).catch(() => {});
+          }
+
+          syncTimerToStorage({
+            isRunning: false,
+            isPaused: true,
+            sessionEndTimestamp: null,
+            activeSegmentStartTimestamp: null,
+            baseAccumulatedSeconds: newAcc,
+            baseIntervalSeconds: intervalSecs,
+            timeLeft: rem,
+            pomodoroPhase: 'focus',
+            phaseTimeLeft: 0,
+          });
+
+          if (rem === 0 && !isCompletingRef.current) {
+            if (handleCompleteRef.current) {
+              handleCompleteRef.current();
+            }
+          } else {
+            sounds.startAlarm?.();
+            setPomodoroAlert({ phase: 'focus', stage: 'ringing' });
+          }
+        } else if (now >= data.sessionEndTimestamp) {
           // Finished while away: award coins, play alarm, present dialog
           if (data.sessionId) {
             sessionIdRef.current = data.sessionId;
@@ -1765,6 +1936,33 @@ export const FocusPage = ({
       });
       return;
     }
+
+    // If timer was paused or has an active session from previous subject, pause/save it and clear session refs
+    if (isPaused || sessionIdRef.current) {
+      const prevId = sessionIdRef.current;
+      if (prevId) {
+        api.pauseSession(prevId, {
+          actualSeconds: accumulatedElapsedRef.current || 0,
+          intervalSeconds: intervalElapsedRef.current || 0,
+          isEarlyBreakConfirmed: false,
+        }).catch(() => {});
+      }
+      sessionIdRef.current = null;
+      setSessionId(null);
+      isRunningRef.current = false;
+      isPausedRef.current = false;
+      setIsRunning(false);
+      setIsPaused(false);
+      accumulatedElapsedRef.current = 0;
+      setAccumulatedSeconds(0);
+      intervalElapsedRef.current = 0;
+      setIntervalSeconds(0);
+      userHasCustomizedDurationRef.current = false;
+      setPomodoroAlert(null);
+      pomoAlertActiveRef.current = false;
+      clearTimerStorage();
+    }
+
     applySubjectSelection(subject);
   };
 
@@ -1791,6 +1989,33 @@ export const FocusPage = ({
       });
       return;
     }
+
+    // If timer was paused or has an active session from previous task, pause/save it and clear session refs
+    if (isPaused || sessionIdRef.current) {
+      const prevId = sessionIdRef.current;
+      if (prevId) {
+        api.pauseSession(prevId, {
+          actualSeconds: accumulatedElapsedRef.current || 0,
+          intervalSeconds: intervalElapsedRef.current || 0,
+          isEarlyBreakConfirmed: false,
+        }).catch(() => {});
+      }
+      sessionIdRef.current = null;
+      setSessionId(null);
+      isRunningRef.current = false;
+      isPausedRef.current = false;
+      setIsRunning(false);
+      setIsPaused(false);
+      accumulatedElapsedRef.current = 0;
+      setAccumulatedSeconds(0);
+      intervalElapsedRef.current = 0;
+      setIntervalSeconds(0);
+      userHasCustomizedDurationRef.current = false;
+      setPomodoroAlert(null);
+      pomoAlertActiveRef.current = false;
+      clearTimerStorage();
+    }
+
     applyTaskFallbackSelection(task);
   };
 
@@ -1994,7 +2219,7 @@ export const FocusPage = ({
 
       const currId = sessionIdRef.current || sessionId;
       if (currId) {
-        api.resumeSession(currId).catch((err) => {
+        api.resumeSession(currId, { remainingSeconds: remainingSecs }).catch((err) => {
           console.warn('Backend resume sync notice:', err?.message || err);
         });
       }
@@ -2236,7 +2461,7 @@ export const FocusPage = ({
 
       const currId = sessionIdRef.current || sessionId;
       if (currId) {
-        api.resumeSession(currId).catch(() => {});
+        api.resumeSession(currId, { remainingSeconds: remainingSecs }).catch(() => {});
       }
 
       syncTimerToStorage({
@@ -2969,8 +3194,8 @@ export const FocusPage = ({
                 </h3>
                 <p className="text-xs sm:text-sm text-[#576560] dark:text-[#8BA398] font-medium leading-relaxed">
                   {pomodoroAlert.phase === 'focus'
-                    ? 'Great work! Focus interval ho gaya. Alarm band karne ke liye STOP ALARM dabao.'
-                    : 'Break khatam! Padhai pe wapas lautne ka waqt ho gaya. Alarm band karne ke liye STOP ALARM dabao.'}
+                    ? 'Great work! Focus interval is complete. Click STOP ALARM to silence.'
+                    : 'Break is over! Time to get back to studying. Click STOP ALARM to silence.'}
                 </p>
                 <div className="pt-2">
                   <button
@@ -2991,7 +3216,7 @@ export const FocusPage = ({
                   What next?
                 </h3>
                 <p className="text-xs sm:text-sm text-[#576560] dark:text-[#8BA398] font-medium leading-relaxed">
-                  Focus interval complete. Break lena hai ya padhai continue karni hai?
+                  Focus interval complete. Would you like to take a break or continue studying?
                 </p>
                 <div className="flex flex-col gap-2.5 pt-2">
                   <button
@@ -3025,7 +3250,7 @@ export const FocusPage = ({
                   Rest Interval Concluded
                 </h3>
                 <p className="text-xs sm:text-sm text-[#576560] dark:text-[#8BA398] font-medium leading-relaxed">
-                  Aapka break samay poora ho chuka hai. Kya aap agla focus session continue karna chahte hain, ya thoda aur rest extend karna hai?
+                  Your break time has concluded. Would you like to resume your study session or extend your rest?
                 </p>
                 <div className="flex flex-col gap-2.5 pt-2">
                   <button

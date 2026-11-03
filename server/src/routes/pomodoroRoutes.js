@@ -471,13 +471,22 @@ router.post('/:sessionId/resume', requireAuth, async (req, res) => {
     }
 
     const totalGoalSecs = session.totalGoalSeconds || session.durationMinutes * 60;
-    const remainingSecs = Math.max(0, totalGoalSecs - (session.accumulatedSeconds || 0));
+    let remainingSecs = Math.max(0, totalGoalSecs - (session.accumulatedSeconds || 0));
+    const clientRemaining = Number(req.body.remainingSeconds);
+    if (!isNaN(clientRemaining) && clientRemaining > 0 && clientRemaining <= totalGoalSecs) {
+      remainingSecs = clientRemaining;
+    }
+
     const expectedEndTime = new Date(now.getTime() + remainingSecs * 1000);
     session.expectedEndTime = expectedEndTime;
     session.completionNotificationSent = false;
 
     await session.save();
-    scheduleSessionNotification(session._id, req.user._id, session.taskName, expectedEndTime);
+    if (remainingSecs > 5) {
+      scheduleSessionNotification(session._id, req.user._id, session.taskName, expectedEndTime);
+    } else {
+      cancelSessionNotification(session._id);
+    }
 
     return res.json({
       success: true,
