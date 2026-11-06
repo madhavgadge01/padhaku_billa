@@ -1,0 +1,13 @@
+{
+   "appId": "com.padhakubilla.app",
+  "appName": "Padhaku Billa",
+  "webDir": "dist",
+  "plugins": {
+    "GoogleAuth": {
+      "scopes": ["profile", "email"],
+      "serverClientId": "275129565298-o0durg4f3mug1ag03vquhll0r7n00onp.apps.googleusercontent.com",
+      "androidClientId": "275129565298-etlbfv32k04d43f6u0poccpqlr4eiv83.apps.googleusercontent.com",
+      "forceCodeForRefreshToken": true
+    }
+  }
+}

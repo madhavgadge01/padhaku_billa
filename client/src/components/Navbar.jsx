@@ -34,9 +34,11 @@ export const Navbar = ({
       <div className="max-w-7xl mx-auto flex items-center justify-between">
         {/* Left: Brand Logo & Title */}
         <div className="flex items-center space-x-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-sky-500 to-emerald-400 flex items-center justify-center text-slate-950 font-black text-xl shadow-lg shadow-sky-500/20">
-            ⚡
-          </div>
+          <img
+            src="/padhaku_billa logo.jpeg"
+            alt="Padhaku Billa Logo"
+            className="w-10 h-10 rounded-xl object-cover shadow-sm border border-slate-700"
+          />
           <div>
             <div className="flex items-center space-x-2">
               <span className="text-lg font-black text-slate-100 tracking-tight">Padhaku Billa</span>

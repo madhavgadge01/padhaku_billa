@@ -571,7 +571,12 @@ export const PomodoroTimer = ({
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-slate-900 border-2 border-emerald-500/60 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl text-center space-y-6 animate-in zoom-in-95 duration-200 relative overflow-hidden">
             <div className="inline-flex items-center space-x-2 px-3.5 py-1.5 rounded-full bg-emerald-950/60 border border-emerald-500/40 text-xs font-bold text-emerald-400">
-              <span>🌱 Padhaku Billa Focus Session</span>
+              <img
+                src="/padhaku_billa logo.jpeg"
+                alt="Padhaku Billa Logo"
+                className="w-4 h-4 rounded-full object-cover inline-block"
+              />
+              <span>Padhaku Billa Focus Session</span>
             </div>
 
             <div className="bg-slate-800/80 border border-slate-700 p-4 rounded-2xl shadow-inner">

@@ -4202,7 +4202,12 @@ export const FocusPage = ({
         <div className="fixed inset-0 z-[100000] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-white dark:bg-[#162420] border-2 border-[#1B3B2F] dark:border-[#34D399] rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl text-center space-y-6 animate-in zoom-in-95 duration-200 relative overflow-hidden">
             <div className="inline-flex items-center space-x-2 px-3.5 py-1.5 rounded-full bg-[#E8F5EE] dark:bg-[#1C2E29] border border-[#C8E6D5] dark:border-[#2B5246] text-xs font-bold text-[#1B3B2F] dark:text-[#A3D9C9]">
-              <span>🌱 Padhaku Billa Focus Session</span>
+              <img
+                src="/padhaku_billa logo.jpeg"
+                alt="Padhaku Billa Logo"
+                className="w-4 h-4 rounded-full object-cover inline-block"
+              />
+              <span>Padhaku Billa Focus Session</span>
             </div>
 
             <div className="bg-[#FAF8F5] dark:bg-[#1C2E29] border border-[#EAE5DD] dark:border-[#253D35] p-4 rounded-2xl shadow-inner">

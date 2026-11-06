@@ -21,10 +21,7 @@ import { LeaderboardPage } from './pages/LeaderboardPage.jsx';
 import { RewardsPage } from './pages/RewardsPage.jsx';
 import { SettingsPage } from './pages/SettingsPage.jsx';
 import { WeeklyPlanPage } from './pages/WeeklyPlanPage.jsx';
-
-import { AuthModal } from './components/AuthModal.jsx';
-import { OnboardingModal } from './components/OnboardingModal.jsx';
-import { GoogleLogo } from './components/GoogleSignInButton.jsx';
+import { Landing } from './pages/Landing.jsx';
 import { sounds } from './audio/soundEffects.js';
 import { api } from './services/api.js';
 import { getPageFromPath, getPathForPage } from './utils/router.js';
@@ -46,8 +43,6 @@ export function App() {
   const [showFocusNavBlockedModal, setShowFocusNavBlockedModal] = useState(false);
 
   // Modals & Settings
-  const [showAuthModal, setShowAuthModal] = useState(false);
-  const [showOnboardingModal, setShowOnboardingModal] = useState(false);
   const [soundMuted, setSoundMuted] = useState(false);
   const [theme, setTheme] = useState(() => localStorage.getItem('lifelevel_theme') || 'dark');
 
@@ -319,9 +314,11 @@ export function App() {
   if (loading) {
     return (
       <div className="min-h-screen bg-[#F6FAF7] dark:bg-[#0A0F0D] flex flex-col items-center justify-center text-[#0D1F17] dark:text-white">
-        <div className="w-12 h-12 rounded-2xl bg-[#0D1F17] dark:bg-[#10B981] text-emerald-400 dark:text-[#06140D] flex items-center justify-center font-black text-2xl shadow-sm mb-4 animate-bounce">
-          🌱
-        </div>
+        <img
+          src="/padhaku_billa logo.jpeg"
+          alt="Padhaku Billa Logo"
+          className="w-14 h-14 rounded-2xl object-cover shadow-md mb-4 animate-bounce border border-emerald-950/10 dark:border-white/10"
+        />
         <h2 className="text-lg font-black tracking-tight">Padhaku Billa</h2>
         <p className="text-xs text-[#4A5B53] dark:text-[#94A3B8] mt-1 font-medium">
           Waking up Sparky and checking streaks...
@@ -332,126 +329,7 @@ export function App() {
 
   // --- PUBLIC LANDING VIEW IF NOT LOGGED IN ---
   if (!user) {
-    return (
-      <div className="min-h-screen bg-[#F6FAF7] dark:bg-[#0A0F0D] text-[#0D1F17] dark:text-white flex flex-col transition-colors">
-        {/* Minimal Navigation */}
-        <nav className="p-6 max-w-6xl mx-auto w-full flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 rounded-2xl bg-[#1B3B2F] text-[#DCEFE3] flex items-center justify-center font-black text-xl shadow-sm">
-              🌱
-            </div>
-            <span className="text-xl font-black tracking-tight">Padhaku Billa</span>
-          </div>
-
-          <div className="flex items-center space-x-3">
-            <button
-              onClick={() => {
-                sounds.playClick();
-                setShowAuthModal(true);
-              }}
-              className="px-4 py-2 text-xs font-bold text-[#576560] dark:text-[#9EB5AB] hover:text-[#1C2A24] dark:hover:text-white transition cursor-pointer"
-            >
-              Log In
-            </button>
-            <button
-              onClick={() => {
-                sounds.playClick();
-                setShowOnboardingModal(true);
-              }}
-              className="bg-[#1B3B2F] hover:bg-[#142C23] text-white text-xs font-bold px-5 py-2.5 rounded-2xl shadow-sm transition cursor-pointer"
-            >
-              Start Free
-            </button>
-          </div>
-        </nav>
-
-        {/* Hero Section */}
-        <div className="flex-1 max-w-4xl mx-auto px-6 py-12 flex flex-col items-center text-center justify-center">
-       
-
-          <h1 className="text-4xl sm:text-6xl font-black tracking-tight text-[#1C2A24] dark:text-[#F2F7F4] leading-tight">
-            Focus deeply. Build discipline.{' '}
-            <span className="text-[#2B5A52] dark:text-[#A3D9C9]">Care for Sparky.</span>
-          </h1>
-
-          <p className="mt-4 text-base sm:text-lg font-bold text-[#D97724] dark:text-[#F59E0B] tracking-wide">
-            “Honest with yourself. I track your time, not your lies.👀”
-          </p>
-
-          <p className="mt-2 text-sm sm:text-base text-[#576560] dark:text-[#8BA398] max-w-2xl font-medium leading-relaxed">
-            A calm, minimal productivity web app designed to boost consistency through customizable reset times, an interactive 2D cartoon cat, and honest progress tracking.
-          </p>
-
-          <div className="mt-8 flex flex-col sm:flex-row items-center gap-3">
-            <button
-              onClick={() => {
-                sounds.playClick();
-                setShowAuthModal(true);
-              }}
-              className="flex items-center space-x-2.5 bg-white dark:bg-[#162420] text-[#1C2A24] dark:text-[#F2F7F4] border border-[#EAE5DD] dark:border-[#253D35] px-7 py-3.5 rounded-2xl font-black text-sm shadow-sm transition-all transform hover:scale-105 cursor-pointer"
-            >
-              <GoogleLogo className="w-5 h-5" />
-              <span>CONTINUE WITH GOOGLE</span>
-            </button>
-
-            
-          </div>
-
-          {/* 3 Pillars Preview */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-16 w-full text-left">
-            <div className="p-6 rounded-3xl bg-white dark:bg-[#162420] border border-[#EAE5DD] dark:border-[#253D35] shadow-sm">
-              <span className="text-2xl block mb-2">🐾</span>
-              <h3 className="text-sm font-black text-[#1C2A24] dark:text-[#F2F7F4]">
-                Interactive 2D Mascot Pet
-              </h3>
-              <p className="text-xs text-[#576560] dark:text-[#8BA398] mt-1.5 leading-relaxed">
-                Feed, hydrate, cuddle Sparky, and equip unlocked hats and glasses. When you focus, Sparky studies alongside you.
-              </p>
-            </div>
-
-            <div className="p-6 rounded-3xl bg-white dark:bg-[#162420] border border-[#EAE5DD] dark:border-[#253D35] shadow-sm">
-              <span className="text-2xl block mb-2">🔥</span>
-              <h3 className="text-sm font-black text-[#1C2A24] dark:text-[#F2F7F4]">
-                Night-Friendly Daily Streaks
-              </h3>
-              <p className="text-xs text-[#576560] dark:text-[#8BA398] mt-1.5 leading-relaxed">
-                Configurable study day reset time (e.g. 6 AM). Overnight study sessions never break your streak at midnight.
-              </p>
-            </div>
-
-            <div className="p-6 rounded-3xl bg-white dark:bg-[#162420] border border-[#EAE5DD] dark:border-[#253D35] shadow-sm">
-              <span className="text-2xl block mb-2">📅</span>
-              <h3 className="text-sm font-black text-[#1C2A24] dark:text-[#F2F7F4]">
-                Weekly Subject Timetable
-              </h3>
-              <p className="text-xs text-[#576560] dark:text-[#8BA398] mt-1.5 leading-relaxed">
-                Schedule distinct subjects and targets for each day of the week with 18 vibrant accessible colors.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Auth Modal */}
-        <AuthModal
-          isOpen={showAuthModal}
-          onClose={() => setShowAuthModal(false)}
-          onAuthSuccess={handleAuthSuccess}
-          onSwitchToSignup={() => setShowOnboardingModal(true)}
-        />
-
-        {/* Public Onboarding Modal (Starts at Step 1: Email) */}
-        {showOnboardingModal && (
-          <OnboardingModal
-            user={null}
-            onComplete={(newUser) => {
-              setShowOnboardingModal(false);
-              handleAuthSuccess(newUser);
-            }}
-            onCancel={() => setShowOnboardingModal(false)}
-          />
-        )}
-      </div>
-    );
+    return <Landing onAuthSuccess={handleAuthSuccess} />;
   }
 
   // --- LOGGED IN MULTI-PAGE APPLICATION ---

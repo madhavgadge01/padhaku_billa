@@ -93,7 +93,7 @@ router.post('/test', requireAuth, async (req, res) => {
     const result = await sendPushToUser(req.user._id, {
       title: 'Padhaku Billa Notifications Active! 🐾',
       body: 'Your device is configured to receive background focus notifications.',
-      icon: '/favicon.svg',
+      icon: '/favicon.jpeg',
       tag: 'test-notification',
       url: '/focus',
     });

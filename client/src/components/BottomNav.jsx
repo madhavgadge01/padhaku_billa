@@ -53,7 +53,14 @@ export const BottomNav = ({ activePage, onNavigate }) => {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between pb-2 border-b border-emerald-950/5 dark:border-white/5">
-              <h3 className="text-sm font-black text-[#0D1F17] dark:text-white">More Features</h3>
+              <div className="flex items-center space-x-2">
+                <img
+                  src="/padhaku_billa logo.jpeg"
+                  alt="Padhaku Billa Logo"
+                  className="w-5 h-5 rounded-md object-cover border border-emerald-950/10 dark:border-white/10"
+                />
+                <h3 className="text-sm font-black text-[#0D1F17] dark:text-white">Padhaku Billa</h3>
+              </div>
               <button
                 onClick={() => setShowMoreMenu(false)}
                 className="p-1 text-[#4A5B53] dark:text-[#94A3B8] hover:text-[#0D1F17] dark:hover:text-white"

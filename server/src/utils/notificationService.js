@@ -100,7 +100,7 @@ export async function scheduleSessionNotification(sessionId, userId, taskName, c
       await sendPushToUser(userId, {
         title: 'Focus Quest Complete! ⏰',
         body: `Time is up! You finished your goal for "${taskName}". Come claim your coins!`,
-        icon: '/favicon.svg',
+        icon: '/favicon.jpeg',
         tag: `session-complete-${sessionDocId}`,
         url: '/focus',
       });
@@ -179,7 +179,7 @@ export function startNotificationWatchdog() {
         await sendPushToUser(session.userId, {
           title: 'Focus Quest Complete! ⏰',
           body: `Time is up! You finished your goal for "${session.taskName}". Open Padhaku Billa to collect your reward!`,
-          icon: '/favicon.svg',
+          icon: '/favicon.jpeg',
           tag: `session-complete-${session._id}`,
           url: '/focus',
         });

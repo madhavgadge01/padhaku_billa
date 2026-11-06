@@ -16,12 +16,14 @@ import {
   Award,
   Star,
   ExternalLink,
+  Download,
 } from 'lucide-react';
 import { formatResetTimeDisplay } from '../utils/dateUtils.js';
 import { sounds } from '../audio/soundEffects.js';
 import { api } from '../services/api.js';
 import { BADGES_MAP, getBadgeAssetUrl } from '../constants/badges.js';
 import { InstagramIcon, LinkedInIcon } from '../components/SocialIcons.jsx';
+import { APP_VERSION, isIOSDevice, triggerApkDownload } from '../utils/deviceUtils.js';
 
 const FIELDS_OF_STUDY = [
   'Computer Science',
@@ -87,6 +89,23 @@ export const SettingsPage = ({
   // My Badges & Profile Showcase
   const [updatingShowcase, setUpdatingShowcase] = useState(false);
   const [badgeNotice, setBadgeNotice] = useState('');
+
+  // Mobile App Download
+  const [iosNotice, setIosNotice] = useState(false);
+  const [downloadSuccess, setDownloadSuccess] = useState(false);
+  const isIOS = isIOSDevice();
+
+  const handleDownloadApp = () => {
+    sounds.playClick();
+    if (isIOS) {
+      setIosNotice(true);
+      setTimeout(() => setIosNotice(false), 5000);
+      return;
+    }
+    triggerApkDownload();
+    setDownloadSuccess(true);
+    setTimeout(() => setDownloadSuccess(false), 4000);
+  };
 
   const ownedBadgeIds = user?.inventory?.badges || [];
   const showcaseBadgeIds = user?.inventory?.showcaseBadges || [];
@@ -620,6 +639,59 @@ export const SettingsPage = ({
               </button>
             </div>
           </div>
+        </div>
+
+        {/* 6. DOWNLOAD MOBILE APP */}
+        <div className="bg-white dark:bg-[#162420] rounded-3xl border border-[#EAE5DD] dark:border-[#253D35] p-6 sm:p-7 shadow-sm">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 mb-4 border-b border-[#EAE5DD] dark:border-[#253D35] gap-3">
+            <div className="flex items-center space-x-3">
+              <img
+                src="/padhaku_billa logo.jpeg"
+                alt="Padhaku Billa Logo"
+                className="w-10 h-10 rounded-xl object-cover shadow-xs border border-emerald-950/10 dark:border-white/10"
+              />
+              <div>
+                <h3 className="text-base font-black text-[#1C2A24] dark:text-[#F2F7F4]">
+                  Padhaku Billa Mobile App
+                </h3>
+                <div className="flex items-center space-x-2 mt-0.5">
+                  <span className="text-[11px] font-mono font-bold px-2 py-0.5 rounded-md bg-[#E8F5EE] dark:bg-[#1C2E29] text-[#1B3B2F] dark:text-[#A3D9C9] border border-[#C8E6D5] dark:border-[#2B5246]">
+                    {APP_VERSION}
+                  </span>
+                  <span className="text-[11px] text-[#576560] dark:text-[#8BA398]">
+                    Android APK (Direct Download)
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleDownloadApp}
+              className="flex items-center space-x-2 bg-[#1B3B2F] hover:bg-[#142C23] text-white px-5 py-2.5 rounded-xl text-xs font-black shadow-sm transition transform hover:scale-105 cursor-pointer self-start sm:self-auto"
+            >
+              <Download className="w-4 h-4 text-emerald-400" />
+              <span>Download APK</span>
+            </button>
+          </div>
+
+          {iosNotice && (
+            <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-700 dark:text-amber-300 font-bold mb-3 animate-in fade-in flex items-center space-x-2">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              <span>Available on Android only (iOS coming soon).</span>
+            </div>
+          )}
+
+          {downloadSuccess && (
+            <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-xs text-emerald-700 dark:text-emerald-300 font-bold mb-3 animate-in fade-in flex items-center space-x-2">
+              <Check className="w-4 h-4 flex-shrink-0" />
+              <span>Downloading Padhaku Billa APK ({APP_VERSION})...</span>
+            </div>
+          )}
+
+          <p className="text-xs text-[#576560] dark:text-[#8BA398] leading-relaxed">
+            Install Padhaku Billa on your Android phone for native notifications, offline pet care, and full-screen focus sessions.
+          </p>
         </div>
 
         {/* Action Save Button */}

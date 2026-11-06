@@ -19,8 +19,8 @@ self.addEventListener('push', (event) => {
   let data = {
     title: 'Focus Session Complete! ⏰',
     body: 'Great job! Your focus quest has reached its goal.',
-    icon: '/favicon.svg',
-    badge: '/favicon.svg',
+    icon: '/padhaku_billa logo.jpeg',
+    badge: '/padhaku_billa logo.jpeg',
     url: '/focus',
     tag: 'focus-session-complete',
   };
@@ -37,8 +37,8 @@ self.addEventListener('push', (event) => {
 
   const options = {
     body: data.body,
-    icon: data.icon || '/favicon.svg',
-    badge: data.badge || '/favicon.svg',
+    icon: data.icon || '/padhaku_billa logo.jpeg',
+    badge: data.badge || '/padhaku_billa logo.jpeg',
     tag: data.tag || 'focus-session-complete',
     renotify: true,
     requireInteraction: true,

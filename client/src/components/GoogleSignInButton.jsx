@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
+import { Capacitor } from '@capacitor/core';
+import { GoogleAuth } from '@codetrix-studio/capacitor-google-auth';
 
 export const GoogleLogo = ({ className = 'w-5 h-5 flex-shrink-0' }) => (
   <svg className={className} viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -33,10 +35,42 @@ export const GoogleSignInButton = ({
   const [gisLoaded, setGisLoaded] = useState(false);
   const [initError, setInitError] = useState('');
 
+  const isNative = Capacitor.isNativePlatform();
   const clientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID || '').trim();
 
-  // 1. Initialize and render official Google Identity Services button
+  // Initialize Capacitor Google Auth
   useEffect(() => {
+    GoogleAuth.initialize({
+      clientId: '275129565298-o0durg4f3mug1ag03vquhll0r7n00onp.apps.googleusercontent.com',
+      scopes: ['profile', 'email'],
+      grantOfflineAccess: true,
+    });
+  }, []);
+
+  // Login Button Handler
+  const handleGoogleLogin = async () => {
+    try {
+      const googleUser = await GoogleAuth.signIn();
+      const idToken = googleUser?.authentication?.idToken || googleUser?.idToken;
+
+      // Ye idToken ab tu apne backend (MERN) par bhej de verify karne ke liye
+      console.log("Google Token:", idToken);
+
+      if (onSuccess && idToken) {
+        onSuccess(idToken);
+      }
+    } catch (error) {
+      console.error("Google Sign In Failed", error);
+      if (onError) {
+        onError(error?.message || 'Google Sign In Failed');
+      }
+    }
+  };
+
+  // 1. Initialize and render official Google Identity Services button (Web only)
+  useEffect(() => {
+    if (isNative) return;
+
     // Safe runtime diagnostic: confirms configuration status without exposing the actual Client ID
     const isConfigured = Boolean(clientId && clientId.length > 0);
     const hasGoogleSuffix = isConfigured && clientId.endsWith('.apps.googleusercontent.com');
@@ -118,31 +152,43 @@ export const GoogleSignInButton = ({
         clearTimeout(timeoutId);
       };
     }
-  }, [clientId, text]);
+  }, [clientId, text, isNative, onSuccess, onError]);
 
-  // Fallback handler if user clicks fallback button
+  // Fallback handler if user clicks fallback button on web
   const handleFallbackClick = () => {
     if (loading) return;
-
-    if (!clientId) {
-      if (onError) onError('Google Client ID is not configured in environment variables.');
-      return;
-    }
-
-    if (window.google?.accounts?.id) {
-      window.google.accounts.id.prompt((notification) => {
-        if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-          // If One Tap is skipped or blocked, try re-rendering the standard button
-          if (containerRef.current?.firstChild) {
-            containerRef.current.firstChild.click?.();
-          }
-        }
-      });
-    } else {
-      if (onError) onError('Google Sign-In is still initializing. Please wait a moment.');
-    }
+    handleGoogleLogin();
   };
 
+  const buttonLabel =
+    text === 'signin_with'
+      ? 'Sign in with Google'
+      : text === 'signup_with'
+      ? 'Sign up with Google'
+      : 'Continue with Google';
+
+  // Native Platform: Direct Native Capacitor Google Button
+  if (isNative) {
+    return (
+      <div className={`w-full flex flex-col items-center ${className}`}>
+        <button
+          type="button"
+          onClick={handleGoogleLogin}
+          disabled={loading}
+          className="w-full max-w-[320px] flex items-center justify-center space-x-3 px-5 py-3 rounded-full border border-[#EAE5DD] dark:border-[#253D35] bg-white dark:bg-[#162420] text-[#1C2A24] dark:text-[#F2F7F4] text-xs font-bold shadow-2xs hover:bg-[#FAF8F5] dark:hover:bg-[#1C2E29] transition active:scale-98 cursor-pointer disabled:opacity-50"
+        >
+          {loading ? (
+            <Loader2 className="w-5 h-5 animate-spin text-[#1B3B2F] dark:text-[#A3D9C9]" />
+          ) : (
+            <GoogleLogo />
+          )}
+          <span>{buttonLabel}</span>
+        </button>
+      </div>
+    );
+  }
+
+  // Web Browser Platform
   return (
     <div className={`w-full flex flex-col items-center ${className}`}>
       {/* Official Google Identity Services Rendered Container */}
@@ -159,14 +205,14 @@ export const GoogleSignInButton = ({
           type="button"
           onClick={handleFallbackClick}
           disabled={loading}
-          className="w-full max-w-[320px] flex items-center justify-center space-x-3 px-5 py-3 rounded-full border border-[#EAE5DD] dark:border-[#253D35] bg-white dark:bg-[#162420] text-[#1C2A24] dark:text-[#F2F7F4] text-xs font-bold shadow-2xs hover:bg-[#FAF8F5] dark:hover:bg-[#1C2E29] transition cursor-pointer"
+          className="w-full max-w-[320px] flex items-center justify-center space-x-3 px-5 py-3 rounded-full border border-[#EAE5DD] dark:border-[#253D35] bg-white dark:bg-[#162420] text-[#1C2A24] dark:text-[#F2F7F4] text-xs font-bold shadow-2xs hover:bg-[#FAF8F5] dark:hover:bg-[#1C2E29] transition cursor-pointer disabled:opacity-50"
         >
           {loading ? (
             <Loader2 className="w-5 h-5 animate-spin text-[#1B3B2F] dark:text-[#A3D9C9]" />
           ) : (
             <GoogleLogo />
           )}
-          <span>Continue with Google</span>
+          <span>{buttonLabel}</span>
         </button>
       )}
 
@@ -180,4 +226,3 @@ export const GoogleSignInButton = ({
 };
 
 export default GoogleSignInButton;
-

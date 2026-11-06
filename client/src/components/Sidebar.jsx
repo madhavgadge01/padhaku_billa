@@ -49,14 +49,15 @@ export const Sidebar = ({
     <aside className="hidden md:flex flex-col w-64 h-screen sticky top-0 bg-[#F6FAF7] dark:bg-[#0A0F0D] border-r border-emerald-950/5 dark:border-white/5 px-4 py-6 transition-colors duration-200 select-none z-30">
       {/* Brand Header */}
       <div className="flex items-center space-x-3 px-3 mb-6">
-        <div className="w-10 h-10 rounded-2xl bg-[#0D1F17] dark:bg-[#10B981] text-emerald-400 dark:text-[#06140D] flex items-center justify-center font-black text-xl shadow-sm">
-          🌱
-        </div>
+        <img
+          src="/padhaku_billa logo.jpeg"
+          alt="Padhaku Billa Logo"
+          className="w-10 h-10 rounded-2xl object-cover shadow-sm border border-emerald-950/10 dark:border-white/10"
+        />
         <div>
           <h1 className="text-lg font-black text-[#0D1F17] dark:text-white tracking-tight leading-tight">
             Padhaku Billa
           </h1>
-         
         </div>
       </div>
 

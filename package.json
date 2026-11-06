@@ -7,6 +7,17 @@
     "dev:client": "npm run dev --prefix client",
     "dev": "npm run dev:server & npm run dev:client",
     "start": "npm run dev",
-    "build": "npm run build --prefix client"
+    "build": "npm run build --prefix client",
+    "android:sync": "npm run build && npx cap sync android",
+    "android:build": "npm run android:sync && cd android && ./gradlew assembleDebug",
+    "android:run": "npm run android:sync && npx cap run android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.6.0",
+    "@capacitor/core": "^8.6.0",
+    "@codetrix-studio/capacitor-google-auth": "^3.4.0-rc.4"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.6.0"
   }
 }

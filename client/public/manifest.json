@@ -9,10 +9,16 @@
   "orientation": "portrait-primary",
   "icons": [
     {
-      "src": "/favicon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
+      "src": "/padhaku_billa logo.jpeg",
+      "sizes": "512x512",
+      "type": "image/jpeg",
       "purpose": "any maskable"
+    },
+    {
+      "src": "/favicon.jpeg",
+      "sizes": "512x512",
+      "type": "image/jpeg",
+      "purpose": "any"
     }
   ]
 }

@@ -375,9 +375,11 @@ export const OnboardingModal = ({ user, onComplete, onCancel }) => {
         {step === 2 && (
           <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
             <div className="text-center space-y-2">
-              <div className="w-14 h-14 mx-auto rounded-full bg-[#E8F5EE] dark:bg-[#1C2E29] flex items-center justify-center text-3xl shadow-inner mb-3 border border-[#C8E6D5] dark:border-[#2B5246]">
-                🌱
-              </div>
+              <img
+                src="/padhaku_billa logo.jpeg"
+                alt="Padhaku Billa Logo"
+                className="w-16 h-16 mx-auto rounded-full object-cover shadow-sm mb-3 border-2 border-[#C8E6D5] dark:border-[#2B5246]"
+              />
               <h3 className="text-2xl font-black tracking-tight text-[#1C2A24] dark:text-[#F2F7F4]">Welcome aboard!</h3>
               <p className="text-xs font-medium text-[#576560] dark:text-[#8BA398]">
                 What should we call you on your focus journey?

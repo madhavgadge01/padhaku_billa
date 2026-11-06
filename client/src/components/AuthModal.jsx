@@ -161,9 +161,11 @@ export const AuthModal = ({ isOpen, onClose, onAuthSuccess, onSwitchToSignup }) 
 
         {/* Header Branding */}
         <div className="text-center mb-6">
-          <div className="w-12 h-12 mx-auto rounded-2xl bg-[#1B3B2F] text-[#DCEFE3] flex items-center justify-center font-black text-2xl shadow-sm mb-2.5">
-            🌱
-          </div>
+          <img
+            src="/padhaku_billa logo.jpeg"
+            alt="Padhaku Billa Logo"
+            className="w-14 h-14 mx-auto rounded-2xl object-cover shadow-sm mb-2.5 border border-[#EAE5DD] dark:border-[#253D35]"
+          />
           <h2 className="text-2xl font-black tracking-tight">Padhaku Billa Focus RPG</h2>
           <p className="text-xs text-[#576560] dark:text-[#8BA398] mt-1 font-medium">
             Honest with yourself. I track your time, not your lies.👀
