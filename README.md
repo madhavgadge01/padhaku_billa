@@ -4,7 +4,7 @@
 
 ---
 
-## 🌟 Key Features & Architecture
+##  Key Features & Architecture
 
 ### 1. Authentication & Onboarding System
 - **MongoDB & Node.js/Express Backend**:
@@ -69,25 +69,4 @@
 - **1-Click 14-Day Demo Data Seeder**: Instantly populate realistic past sessions for evaluation.
 
 ---
-
-## 🚀 Quickstart & Running Locally
-
-### Prerequisites
-- Node.js (v18+)
-- MongoDB running on `mongodb://127.0.0.1:27017/lifelevel`
-
-### Start Backend Server
-```bash
-cd server
-npm install
-npm run dev
-# Server runs on http://localhost:5001
-```
-
-### Start Frontend Client
-```bash
-cd client
-npm install
-npm run dev
-# Client runs on http://localhost:5173
 ```
