@@ -1,5 +1,6 @@
 //  const API_BASE = 'http://localhost:5001/api';
-export const API_BASE = 'https://tell-profession-reverse-optimum.trycloudflare.com/api';
+// export const API_BASE = 'https://tell-profession-reverse-optimum.trycloudflare.com/api';
+export const API_BASE = 'https://tire-lawsuit-third-clarity.trycloudflare.com';
 const getHeaders = () => {
   const token = localStorage.getItem('lifelevel_token');
   return {
