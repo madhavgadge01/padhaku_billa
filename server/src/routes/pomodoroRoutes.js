@@ -701,7 +701,7 @@ router.post('/:sessionId/checkpoint', requireAuth, async (req, res) => {
           deltaSeconds,
           sessionId: session._id,
           sessionType: 'deep_focus',
-          isFinal: Boolean(req.body.closing),
+          isFinal: false,
           tzOffset,
         });
         session.lastRecordedProgressSeconds = session.actualSeconds;
@@ -1045,7 +1045,7 @@ router.post('/:sessionId/stop', requireAuth, async (req, res) => {
           deltaSeconds,
           sessionId: session._id,
           sessionType: 'deep_focus',
-          isFinal: true,
+          isFinal: false,
           tzOffset,
         });
         session.lastRecordedProgressSeconds = session.actualSeconds;

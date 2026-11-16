@@ -329,7 +329,11 @@ export const recordSessionToUnifiedProgress = async ({
   // 3. Atomically update completed focus time and remaining time
   const newCompletedSeconds = (progress.completedSeconds || 0) + addedSecs;
   const newCompletedMinutes = Math.round((newCompletedSeconds / 60) * 10) / 10;
-  const isNowCompleted = Boolean(progress.isCompleted) || (newCompletedSeconds >= targetSeconds) || (newCompletedMinutes >= targetMinutes);
+  const isAlreadyCompleted = Boolean(progress.isCompleted);
+  // CRITICAL INVARIANT: Intermediate updates (pauses, heartbeats, checkpoints, early stops) must NEVER complete a task!
+  // A task can only become newly completed if this is a final completion (isFinal === true) AND target is achieved.
+  const isTargetAchieved = (newCompletedSeconds >= targetSeconds) || (newCompletedMinutes >= targetMinutes);
+  const isNowCompleted = isAlreadyCompleted || (Boolean(isFinal) && isTargetAchieved);
   const newRemainingSeconds = isNowCompleted ? 0 : Math.max(0, targetSeconds - newCompletedSeconds);
   const newRemainingMinutes = isNowCompleted ? 0 : Math.max(0, Math.ceil(newRemainingSeconds / 60));
 
@@ -346,8 +350,8 @@ export const recordSessionToUnifiedProgress = async ({
 
   await progress.save();
 
-  // 4. If target achieved, mark task/subject completed for today across timetable and Task
-  if (isNowCompleted) {
+  // 4. If newly completed upon genuine final session completion, mark task/subject completed for today across timetable and Task
+  if (isNowCompleted && isFinal && !isAlreadyCompleted) {
     let timetableModified = false;
     DAYS.forEach((d) => {
       (user.weeklyTimetable?.[d] || []).forEach((s) => {

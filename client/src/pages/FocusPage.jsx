@@ -45,6 +45,19 @@ const TIMER_CHANNEL_NAME = 'padhaku_billa_timer_channel';
 const STOPWATCH_STORAGE_KEY = 'padhaku_billa_stopwatch_state';
 const STOPWATCH_PENDING_KEY = 'padhaku_billa_pending_stopwatch_session';
 
+const getInitialSavedTimerState = () => {
+  try {
+    const raw = localStorage.getItem(TIMER_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed) return null;
+    if (parsed.isRunning || parsed.isPaused || (parsed.sessionId && typeof parsed.timeLeft === 'number')) {
+      return parsed;
+    }
+  } catch (e) {}
+  return null;
+};
+
 const saveStopwatchState = (running, paused, baseAcc, segStart) => {
   try {
     const data = {
@@ -93,6 +106,7 @@ export const FocusPage = ({
   onNavigate,
   userCoins = 0,
   initialSubject = null,
+  onSubjectChange,
   onUserUpdate,
   onTimerRunningChange,
   onReload,
@@ -100,6 +114,9 @@ export const FocusPage = ({
   const resetTime = user?.dailyResetTime || '00:00';
   const todayKey = getStudyDayKey(new Date(), resetTime);
   const todayDateStr = getStudyDayDate(new Date(), resetTime);
+
+  // Synchronously restore saved timer session from localStorage on initial render
+  const savedTimerState = getInitialSavedTimerState();
 
   // Helper to get permanent vs effective goal for a subject
   const getPermanentGoalMinutes = (subject) => {
@@ -157,27 +174,42 @@ export const FocusPage = ({
 
   // Timetable integration
   const [timetableToday, setTimetableToday] = useState([]);
-  const [selectedSubject, setSelectedSubject] = useState(null);
+  const [selectedSubject, setSelectedSubject] = useState(() => {
+    if (initialSubject) return initialSubject;
+    if (savedTimerState && (savedTimerState.subjectName || savedTimerState.subjectId)) {
+      return {
+        id: savedTimerState.subjectId,
+        name: savedTimerState.subjectName,
+        color: savedTimerState.color || '#3B82F6',
+      };
+    }
+    return null;
+  });
   const [showSubjectMenu, setShowSubjectMenu] = useState(false);
-  const [customSubjectName, setCustomSubjectName] = useState('');
-  const [selectedColor, setSelectedColor] = useState('#3B82F6');
+  const [customSubjectName, setCustomSubjectName] = useState(() => savedTimerState?.subjectName || '');
+  const [selectedColor, setSelectedColor] = useState(() => savedTimerState?.color || initialSubject?.color || '#3B82F6');
 
   // Duration & Tracking State
-  const initialDuration = activeTask ? activeTask.durationMinutes : 25;
+  const initialDuration = savedTimerState?.customMinutes || (activeTask ? activeTask.durationMinutes : 25);
   const [customMinutes, setCustomMinutes] = useState(initialDuration);
-  const [totalSeconds, setTotalSeconds] = useState(initialDuration * 60);
-  const [timeLeft, setTimeLeft] = useState(initialDuration * 60);
-  const [isRunning, setIsRunning] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
-  const [sessionId, setSessionId] = useState(null);
-  const [pauseCount, setPauseCount] = useState(0);
+  const [totalSeconds, setTotalSeconds] = useState(() => savedTimerState?.totalSeconds || initialDuration * 60);
+  const [timeLeft, setTimeLeft] = useState(() => {
+    if (savedTimerState && typeof savedTimerState.timeLeft === 'number') {
+      return savedTimerState.timeLeft;
+    }
+    return initialDuration * 60;
+  });
+  const [isRunning, setIsRunning] = useState(() => Boolean(savedTimerState?.isRunning && !savedTimerState?.isPaused));
+  const [isPaused, setIsPaused] = useState(() => Boolean(savedTimerState?.isPaused));
+  const [sessionId, setSessionId] = useState(() => savedTimerState?.sessionId || null);
+  const [pauseCount, setPauseCount] = useState(() => savedTimerState?.pauseCount || 0);
   const [completedSessionId, setCompletedSessionId] = useState(null);
 
   // 1. Total Accumulated focus time in current focus session / today
-  const [accumulatedSeconds, setAccumulatedSeconds] = useState(0);
+  const [accumulatedSeconds, setAccumulatedSeconds] = useState(() => savedTimerState?.baseAccumulatedSeconds || 0);
 
   // 2. Verified focus time in the current resume-to-break interval (Threshold: 25 mins = 1500s)
-  const [intervalSeconds, setIntervalSeconds] = useState(0);
+  const [intervalSeconds, setIntervalSeconds] = useState(() => savedTimerState?.baseIntervalSeconds || 0);
 
   // Focus style: 'continuous' vs 'pomodoro'
   const [focusStyle, setFocusStyle] = useState(() => {
@@ -397,23 +429,30 @@ export const FocusPage = ({
   const [pushNotice, setPushNotice] = useState(null);
 
   // Active elapsed segment & timestamp tracking refs (All declared safely AFTER state)
-  const sessionIdRef = useRef(null);
+  const sessionIdRef = useRef(savedTimerState?.sessionId || null);
   const startSessionPromiseRef = useRef(null);
-  const accumulatedElapsedRef = useRef(0);
-  const intervalElapsedRef = useRef(0);
-  const activeSegmentStartRef = useRef(null);
-  const sessionEndTimestampRef = useRef(null);
-  const baseAccumulatedRef = useRef(0);
-  const baseIntervalRef = useRef(0);
-  const isRunningRef = useRef(isRunning);
-  const isPausedRef = useRef(isPaused);
-  const customMinutesRef = useRef(customMinutes);
-  const totalSecondsRef = useRef(totalSeconds);
+  const accumulatedElapsedRef = useRef(savedTimerState?.baseAccumulatedSeconds || 0);
+  const intervalElapsedRef = useRef(savedTimerState?.baseIntervalSeconds || 0);
+  const activeSegmentStartRef = useRef(savedTimerState?.activeSegmentStartTimestamp || null);
+  const sessionEndTimestampRef = useRef(savedTimerState?.sessionEndTimestamp || null);
+  const baseAccumulatedRef = useRef(savedTimerState?.baseAccumulatedSeconds || 0);
+  const baseIntervalRef = useRef(savedTimerState?.baseIntervalSeconds || 0);
+  const isRunningRef = useRef(Boolean(savedTimerState?.isRunning && !savedTimerState?.isPaused));
+  const isPausedRef = useRef(Boolean(savedTimerState?.isPaused));
+  const customMinutesRef = useRef(initialDuration);
+  const totalSecondsRef = useRef(savedTimerState?.totalSeconds || initialDuration * 60);
   const timerBroadcastChannelRef = useRef(null);
   const timerRef = useRef(null);
   const isCompletingRef = useRef(false);
   const countdownTimerRef = useRef(null);
-  const userHasCustomizedDurationRef = useRef(false);
+  const userHasCustomizedDurationRef = useRef(Boolean(savedTimerState));
+
+  // Keep parent (App.jsx) in sync with current selected subject
+  useEffect(() => {
+    if (selectedSubject && onSubjectChange) {
+      onSubjectChange(selectedSubject);
+    }
+  }, [selectedSubject, onSubjectChange]);
 
   // Stopwatch & Dropdown interaction refs
   const stopwatchBaseAccumulatedRef = useRef(0);
@@ -829,6 +868,11 @@ export const FocusPage = ({
           }
         }
 
+        // CRITICAL GUARD: If local state or refs indicate a paused or running session is active, NEVER wipe it out!
+        if (isPausedRef.current || isRunningRef.current || sessionIdRef.current) {
+          return;
+        }
+
         setSessionId(null);
         sessionIdRef.current = null;
         setTotalSeconds(liveStartingSecs);
@@ -848,6 +892,9 @@ export const FocusPage = ({
         setPetFocusState('idle');
       })
       .catch(() => {
+        if (isPausedRef.current || isRunningRef.current || sessionIdRef.current) {
+          return;
+        }
         setSessionId(null);
         sessionIdRef.current = null;
         setTotalSeconds(defaultGoalSecs);
@@ -870,7 +917,7 @@ export const FocusPage = ({
 
   // Sync initialSubject prop if passed from parent
   useEffect(() => {
-    if (initialSubject && !isRunningRef.current) {
+    if (initialSubject && !isRunningRef.current && !isPausedRef.current) {
       const isDifferent =
         !selectedSubject ||
         (initialSubject.id && selectedSubject.id !== initialSubject.id) ||
@@ -903,6 +950,19 @@ export const FocusPage = ({
         setSelectedSubject(firstUnfinished);
         setSelectedColor(firstUnfinished.color || '#3B82F6');
         restoreSubjectProgress(firstUnfinished);
+      } else if (selectedSubject) {
+        // Synchronize selectedSubject with full timetable entry if available
+        const matchedInTimetable = user.weeklyTimetable[todayKey].find(
+          (s) =>
+            (selectedSubject.id && (s.id === selectedSubject.id || s._id?.toString() === selectedSubject.id)) ||
+            (selectedSubject.name && s.name.trim().toLowerCase() === selectedSubject.name.trim().toLowerCase())
+        );
+        if (matchedInTimetable) {
+          if (matchedInTimetable.color && matchedInTimetable.color !== selectedColor) {
+            setSelectedColor(matchedInTimetable.color);
+          }
+          setSelectedSubject((prev) => (prev ? { ...matchedInTimetable, ...prev } : matchedInTimetable));
+        }
       }
     } else {
       api.getWeeklyTimetable()
@@ -1869,6 +1929,19 @@ export const FocusPage = ({
           sessionIdRef.current = data.sessionId;
           setSessionId(data.sessionId);
         }
+        if (data.subjectId || data.subjectName) {
+          setSelectedSubject((prev) => {
+            if (prev && (prev.id === data.subjectId || prev.name?.toLowerCase() === data.subjectName?.toLowerCase())) {
+              return prev;
+            }
+            return {
+              id: data.subjectId,
+              name: data.subjectName,
+              color: data.color || '#3B82F6',
+            };
+          });
+          if (data.color) setSelectedColor(data.color);
+        }
         if (data.customMinutes) {
           setCustomMinutes(data.customMinutes);
           customMinutesRef.current = data.customMinutes;
@@ -1878,9 +1951,10 @@ export const FocusPage = ({
           totalSecondsRef.current = data.totalSeconds;
         }
         setTimeLeft(data.timeLeft);
-        if (data.baseAccumulatedSeconds) {
+        if (typeof data.baseAccumulatedSeconds === 'number') {
           setAccumulatedSeconds(data.baseAccumulatedSeconds);
           accumulatedElapsedRef.current = data.baseAccumulatedSeconds;
+          baseAccumulatedRef.current = data.baseAccumulatedSeconds;
         }
         isRunningRef.current = false;
         isPausedRef.current = true;

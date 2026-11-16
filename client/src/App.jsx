@@ -31,7 +31,22 @@ export function App() {
   const [pet, setPet] = useState(null);
   const [tasks, setTasks] = useState([]);
   const [activeTask, setActiveTask] = useState(null);
-  const [focusedSubject, setFocusedSubject] = useState(null);
+  const [focusedSubject, setFocusedSubject] = useState(() => {
+    try {
+      const raw = localStorage.getItem('padhaku_billa_active_timer');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && (parsed.subjectId || parsed.subjectName)) {
+          return {
+            id: parsed.subjectId,
+            name: parsed.subjectName,
+            color: parsed.color || '#3B82F6',
+          };
+        }
+      }
+    } catch (e) {}
+    return null;
+  });
   const [tasksSummary, setTasksSummary] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -394,6 +409,7 @@ export function App() {
               user={user}
               pet={pet}
               initialSubject={focusedSubject}
+              onSubjectChange={(subj) => setFocusedSubject(subj)}
               onUserUpdate={handleUserUpdate}
               onTimerRunningChange={setIsFocusTimerRunning}
               onReload={loadUserData}
