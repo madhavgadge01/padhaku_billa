@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   User,
   Calendar,
@@ -80,8 +80,18 @@ export const SettingsPage = ({
     !RESET_TIME_OPTIONS.some((o) => o.value === currentResetTime) ? currentResetTime : '05:00'
   );
 
-  const [restDayEnabled, setRestDayEnabled] = useState(user?.restDay?.enabled ?? true);
-  const [restDayOfWeek, setRestDayOfWeek] = useState(user?.restDay?.dayOfWeek ?? 0);
+  const [restDayEnabled, setRestDayEnabled] = useState(() => Boolean(user?.restDay?.enabled));
+  const [restDayOfWeek, setRestDayOfWeek] = useState(() => Number(user?.restDay?.dayOfWeek ?? 0));
+
+  // Sync state if user prop updates or loads asynchronously
+  useEffect(() => {
+    if (user?.restDay !== undefined) {
+      setRestDayEnabled(Boolean(user.restDay?.enabled));
+      if (typeof user.restDay?.dayOfWeek === 'number') {
+        setRestDayOfWeek(user.restDay.dayOfWeek);
+      }
+    }
+  }, [user?.restDay?.enabled, user?.restDay?.dayOfWeek]);
 
   const [saving, setSaving] = useState(false);
   const [statusMsg, setStatusMsg] = useState('');

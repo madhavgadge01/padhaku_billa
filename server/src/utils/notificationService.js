@@ -93,14 +93,22 @@ export async function scheduleSessionNotification(sessionId, userId, taskName, c
     scheduledJobs.delete(sessionDocId);
     try {
       const session = await PomodoroSession.findById(sessionId);
-      if (!session || session.status !== 'in-progress' || session.completionNotificationSent) {
+      const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
+      if (
+        !session ||
+        session.status !== 'in-progress' ||
+        session.completionNotificationSent ||
+        !session.lastHeartbeatAt ||
+        session.lastHeartbeatAt < twoMinutesAgo
+      ) {
+        // Session was paused, interrupted, or user went inactive. Do not send false completion alert.
         return;
       }
 
       await sendPushToUser(userId, {
         title: 'Focus Quest Complete! ⏰',
         body: `Time is up! You finished your goal for "${taskName}". Come claim your coins!`,
-        icon: '/favicon.jpeg',
+        icon: '/padhaku_billa logo.jpeg',
         tag: `session-complete-${sessionDocId}`,
         url: '/focus',
       });
@@ -169,9 +177,11 @@ export function startNotificationWatchdog() {
   watchdogInterval = setInterval(async () => {
     try {
       const now = new Date();
+      const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
       const overdueSessions = await PomodoroSession.find({
         status: 'in-progress',
         expectedEndTime: { $ne: null, $lte: now },
+        lastHeartbeatAt: { $gte: twoMinutesAgo },
         completionNotificationSent: false,
       }).limit(20);
 
@@ -179,7 +189,7 @@ export function startNotificationWatchdog() {
         await sendPushToUser(session.userId, {
           title: 'Focus Quest Complete! ⏰',
           body: `Time is up! You finished your goal for "${session.taskName}". Open Padhaku Billa to collect your reward!`,
-          icon: '/favicon.jpeg',
+          icon: '/padhaku_billa logo.jpeg',
           tag: `session-complete-${session._id}`,
           url: '/focus',
         });

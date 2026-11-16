@@ -1,5 +1,5 @@
 //  const API_BASE = 'http://localhost:5001/api';
-export const API_BASE = 'https://tell-profession-reverse-optimum.trycloudflare.com/api';
+export const API_BASE = 'https://vacation-johnson-birds-deluxe.trycloudflare.com/api';
 const getHeaders = () => {
   const token = localStorage.getItem('lifelevel_token');
   return {
@@ -307,8 +307,8 @@ export const api = {
     }).then(handleResponse),
 
   // Community Leaderboard
-  getLeaderboard: (mode = 'today') =>
-    fetch(`${API_BASE}/leaderboard?mode=${mode}`, {
+  getLeaderboard: (mode = 'today', daysAgo = 0) =>
+    fetch(`${API_BASE}/leaderboard?mode=${mode}&daysAgo=${daysAgo}`, {
       headers: getHeaders(),
     }).then(handleResponse),
 

@@ -19,6 +19,7 @@ import {
   calculateSessionFocusSeconds,
   calculateSessionFocusMinutes,
   reconcileOrphanedSessions,
+  expireStaleRecoverySessions,
 } from '../utils/focusTimeHelper.js';
 import {
   scheduleSessionNotification,
@@ -48,11 +49,19 @@ router.get('/active', requireAuth, async (req, res) => {
     // Sync and clean expired daily progress records and expired task exclusions
     await syncAndCleanDailyProgress(req.user, tzOffset);
 
-    // Find all sessions on today's study day that are in-progress, paused, or interrupted
+    // Clean stale uncompleted sessions older than 48 hours (never touches completed history)
+    await expireStaleRecoverySessions(req.user._id);
+
+    // Find all sessions that are in-progress, paused, or interrupted within 48-hour recovery window or today
+    const fortyEightHoursAgo = new Date(now.getTime() - 48 * 60 * 60 * 1000);
     const activeSessions = await PomodoroSession.find({
       userId: req.user._id,
-      dateStr: todayStudyDay,
       status: { $in: ['in-progress', 'paused', 'interrupted'] },
+      $or: [
+        { dateStr: todayStudyDay },
+        { expiresAt: { $gte: now } },
+        { updatedAt: { $gte: fortyEightHoursAgo } },
+      ],
     }).sort({ updatedAt: -1 });
 
     // Aggregate today's total focus time per subject (completed + active)
@@ -205,13 +214,37 @@ router.post('/start', requireAuth, async (req, res) => {
     const isRestDay = isRestDayForUser(req.user, now, tzOffset);
 
     // Permitting only ONE actively running focus timer per user at a time
-    await PomodoroSession.updateMany(
-      { userId: req.user._id, status: 'in-progress' },
-      { $set: { status: 'paused', activeSegmentStart: null, lastHeartbeatAt: now } }
-    );
+    // Cleanly close open intervals of existing in-progress sessions before pausing them
+    const existingRunning = await PomodoroSession.find({ userId: req.user._id, status: 'in-progress' });
+    for (const runSess of existingRunning) {
+      const refEnd = runSess.lastHeartbeatAt || now;
+      if (runSess.activeSegmentStart) {
+        const seg = Math.max(0, Math.round((refEnd.getTime() - new Date(runSess.activeSegmentStart).getTime()) / 1000));
+        runSess.accumulatedSeconds = (runSess.accumulatedSeconds || 0) + seg;
+        runSess.actualSeconds = Math.max(runSess.actualSeconds || 0, runSess.accumulatedSeconds);
+        runSess.accumulatedFocusDuration = runSess.actualSeconds;
+        runSess.activeSegmentStart = null;
+      }
+      if (Array.isArray(runSess.intervals) && runSess.intervals.length > 0) {
+        const lastInt = runSess.intervals[runSess.intervals.length - 1];
+        if (!lastInt.endedAt) {
+          lastInt.endedAt = refEnd;
+          lastInt.durationSeconds = Math.max(0, Math.round((refEnd.getTime() - new Date(lastInt.startedAt).getTime()) / 1000));
+        }
+      }
+      runSess.status = 'paused';
+      runSess.pausedAt = refEnd;
+      runSess.lastUpdatedAt = now;
+      runSess.expiresAt = new Date(now.getTime() + 48 * 60 * 60 * 1000);
+      runSess.expectedEndTime = null;
+      cancelSessionNotification(runSess._id);
+      await runSess.save();
+    }
 
     const totalGoalSeconds = taskDuration * 60;
     const expectedEndTime = new Date(now.getTime() + totalGoalSeconds * 1000);
+    const resolvedTimerType = req.body.timerType || (req.body.focusStyle === 'pomodoro' ? 'pomodoro' : 'normal');
+
     const session = new PomodoroSession({
       userId: req.user._id,
       taskId: matchedTask._id,
@@ -222,6 +255,12 @@ router.post('/start', requireAuth, async (req, res) => {
       totalGoalSeconds,
       remainingSeconds: totalGoalSeconds,
       startTime: now,
+      startedAt: now,
+      pausedAt: null,
+      resumedAt: null,
+      endedAt: null,
+      lastUpdatedAt: now,
+      expiresAt: new Date(now.getTime() + 48 * 60 * 60 * 1000), // 48-hour recovery retention
       expectedEndTime,
       completionNotificationSent: false,
       activeSegmentStart: now,
@@ -230,12 +269,22 @@ router.post('/start', requireAuth, async (req, res) => {
       actualSeconds: 0,
       actualMinutes: 0,
       accumulatedSeconds: 0,
+      accumulatedFocusDuration: 0,
       intervalActiveSeconds: 0,
+      intervals: [
+        {
+          startedAt: now,
+          endedAt: null,
+          durationSeconds: 0,
+        },
+      ],
       pauseCount: 0,
       confirmedEarlyBreaks: 0,
       freeBreaks: 0,
       pauseLogs: [],
       status: 'in-progress',
+      sessionType: 'deep_focus',
+      timerType: resolvedTimerType,
       dateStr,
       dayOfWeek,
       hourOfDay,
@@ -311,7 +360,23 @@ router.post('/:sessionId/pause', requireAuth, async (req, res) => {
       session.actualMinutes = Math.round((session.actualSeconds / 60) * 10) / 10;
     }
 
+    // Close open interval in intervals array
+    if (Array.isArray(session.intervals) && session.intervals.length > 0) {
+      const lastInt = session.intervals[session.intervals.length - 1];
+      if (!lastInt.endedAt) {
+        lastInt.endedAt = now;
+        lastInt.durationSeconds = Math.max(
+          0,
+          Math.round((now.getTime() - new Date(lastInt.startedAt).getTime()) / 1000)
+        );
+      }
+    }
+
     session.lastHeartbeatAt = now;
+    session.pausedAt = now;
+    session.lastUpdatedAt = now;
+    session.expiresAt = new Date(now.getTime() + 48 * 60 * 60 * 1000);
+    session.accumulatedFocusDuration = session.actualSeconds;
     session.status = 'paused';
     session.expectedEndTime = null;
     cancelSessionNotification(session._id);
@@ -446,17 +511,55 @@ router.post('/:sessionId/resume', requireAuth, async (req, res) => {
 
     const now = new Date();
 
-    // Pause any other in-progress session so only one runs at a time
-    await PomodoroSession.updateMany(
-      { userId: req.user._id, _id: { $ne: session._id }, status: 'in-progress' },
-      { $set: { status: 'paused', activeSegmentStart: null, lastHeartbeatAt: now } }
-    );
+    // Cleanly close open intervals of any other in-progress session before pausing them
+    const otherRunning = await PomodoroSession.find({
+      userId: req.user._id,
+      _id: { $ne: session._id },
+      status: 'in-progress',
+    });
+    for (const runSess of otherRunning) {
+      const refEnd = runSess.lastHeartbeatAt || now;
+      if (runSess.activeSegmentStart) {
+        const seg = Math.max(0, Math.round((refEnd.getTime() - new Date(runSess.activeSegmentStart).getTime()) / 1000));
+        runSess.accumulatedSeconds = (runSess.accumulatedSeconds || 0) + seg;
+        runSess.actualSeconds = Math.max(runSess.actualSeconds || 0, runSess.accumulatedSeconds);
+        runSess.accumulatedFocusDuration = runSess.actualSeconds;
+        runSess.activeSegmentStart = null;
+      }
+      if (Array.isArray(runSess.intervals) && runSess.intervals.length > 0) {
+        const lastInt = runSess.intervals[runSess.intervals.length - 1];
+        if (!lastInt.endedAt) {
+          lastInt.endedAt = refEnd;
+          lastInt.durationSeconds = Math.max(0, Math.round((refEnd.getTime() - new Date(lastInt.startedAt).getTime()) / 1000));
+        }
+      }
+      runSess.status = 'paused';
+      runSess.pausedAt = refEnd;
+      runSess.lastUpdatedAt = now;
+      runSess.expiresAt = new Date(now.getTime() + 48 * 60 * 60 * 1000);
+      runSess.expectedEndTime = null;
+      cancelSessionNotification(runSess._id);
+      await runSess.save();
+    }
+
+    // Starting a new interval in intervals array
+    if (!Array.isArray(session.intervals)) {
+      session.intervals = [];
+    }
+    session.intervals.push({
+      startedAt: now,
+      endedAt: null,
+      durationSeconds: 0,
+    });
 
     // Starting a new 25-minute break interval
     session.intervalActiveSeconds = 0;
     session.currentIntervalStart = now;
     session.activeSegmentStart = now;
     session.lastHeartbeatAt = now;
+    session.resumedAt = now;
+    session.lastUpdatedAt = now;
+    session.expiresAt = new Date(now.getTime() + 48 * 60 * 60 * 1000);
     session.status = 'in-progress';
 
     if (session.pauseLogs.length > 0) {
@@ -554,16 +657,33 @@ router.post('/:sessionId/checkpoint', requireAuth, async (req, res) => {
 
     session.actualSeconds = Math.min(verifiedSecs, maxTotalAllowed);
     session.accumulatedSeconds = session.actualSeconds;
+    session.accumulatedFocusDuration = session.actualSeconds;
     session.intervalActiveSeconds = verifiedInterval;
     session.actualMinutes = Math.round((session.actualSeconds / 60) * 10) / 10;
     session.remainingSeconds = Math.max(0, maxTotalAllowed - session.actualSeconds);
     session.lastHeartbeatAt = now;
+    session.lastUpdatedAt = now;
 
     if (req.body.closing) {
       session.status = 'paused';
       session.isInterrupted = true;
       session.activeSegmentStart = null;
+      session.pausedAt = now;
       session.endTime = now;
+      session.expectedEndTime = null;
+      session.expiresAt = new Date(now.getTime() + 48 * 60 * 60 * 1000);
+      cancelSessionNotification(session._id);
+
+      if (Array.isArray(session.intervals) && session.intervals.length > 0) {
+        const lastInt = session.intervals[session.intervals.length - 1];
+        if (!lastInt.endedAt) {
+          lastInt.endedAt = now;
+          lastInt.durationSeconds = Math.max(
+            0,
+            Math.round((now.getTime() - new Date(lastInt.startedAt).getTime()) / 1000)
+          );
+        }
+      }
       // Note: No coin penalty charged on tab close / reload / navigation
     }
 
@@ -659,8 +779,24 @@ router.post('/:sessionId/complete', requireAuth, async (req, res) => {
       session.actualSeconds = maxTotalAllowed;
     }
 
+    // Close open interval in intervals array
+    if (Array.isArray(session.intervals) && session.intervals.length > 0) {
+      const lastInt = session.intervals[session.intervals.length - 1];
+      if (!lastInt.endedAt) {
+        lastInt.endedAt = now;
+        lastInt.durationSeconds = Math.max(
+          0,
+          Math.round((now.getTime() - new Date(lastInt.startedAt).getTime()) / 1000)
+        );
+      }
+    }
+
     session.actualMinutes = Math.round((session.actualSeconds / 60) * 10) / 10;
     session.endTime = now;
+    session.endedAt = now;
+    session.lastUpdatedAt = now;
+    session.expiresAt = null; // Completed session history is NEVER expired or deleted
+    session.accumulatedFocusDuration = session.actualSeconds;
     session.status = 'completed';
     session.dateStr = todayStudyDay;
     session.expectedEndTime = null;
@@ -871,9 +1007,25 @@ router.post('/:sessionId/stop', requireAuth, async (req, res) => {
     if (!isNaN(clientElapsed) && clientElapsed > 0) {
       session.actualSeconds = Math.max(session.actualSeconds || 0, Math.min(clientElapsed, session.totalGoalSeconds || (session.durationMinutes * 60)));
     }
+    // Close open interval in intervals array
+    if (Array.isArray(session.intervals) && session.intervals.length > 0) {
+      const lastInt = session.intervals[session.intervals.length - 1];
+      if (!lastInt.endedAt) {
+        lastInt.endedAt = now;
+        lastInt.durationSeconds = Math.max(
+          0,
+          Math.round((now.getTime() - new Date(lastInt.startedAt).getTime()) / 1000)
+        );
+      }
+    }
+
     session.actualMinutes = Math.round((session.actualSeconds / 60) * 10) / 10;
     session.lastHeartbeatAt = now;
     session.endTime = now;
+    session.endedAt = now;
+    session.lastUpdatedAt = now;
+    session.expiresAt = null; // Stopped sessions are finalized records and never expire
+    session.accumulatedFocusDuration = session.actualSeconds;
     session.status = 'stopped';
     session.coinsEarned = 0;
     session.expectedEndTime = null;
@@ -1216,6 +1368,7 @@ router.post('/stopwatch', requireAuth, async (req, res) => {
       subjectId: targetSubjectId,
       taskName: finalName,
       sessionType: 'stopwatch',
+      timerType: 'stopwatch',
       activityDescription: (activityDescription || '').trim(),
       sessionNumber,
       stopwatchColorIndex,
@@ -1226,10 +1379,21 @@ router.post('/stopwatch', requireAuth, async (req, res) => {
       actualSeconds: elapsedSeconds,
       actualMinutes,
       accumulatedSeconds: elapsedSeconds,
+      accumulatedFocusDuration: elapsedSeconds,
       lastRecordedProgressSeconds: elapsedSeconds,
       startTime: start,
+      startedAt: start,
       endTime: end,
+      endedAt: end,
       status: 'completed',
+      expiresAt: null, // Completed history records never expire
+      intervals: [
+        {
+          startedAt: start,
+          endedAt: end,
+          durationSeconds: elapsedSeconds,
+        },
+      ],
       dateStr,
       dayOfWeek,
       hourOfDay,
@@ -1265,23 +1429,71 @@ router.post('/stopwatch', requireAuth, async (req, res) => {
       }
     }
 
+    // Award +5 coins idempotently if task goal completed
+    let coinsAwarded = 0;
+    const user = req.user;
+    const isTaskCompleted = Boolean(progressResult?.isCompleted);
+
+    if (isExistingTask && isTaskCompleted) {
+      const taskRef = `task_complete_${targetSubjectId || matchedTask?._id || finalName}_${dateStr}`;
+      const existingTx = await CoinTransaction.findOne({ userId: user._id, referenceId: taskRef });
+      if (!existingTx) {
+        user.coins = (user.coins || 0) + 5;
+        try {
+          await CoinTransaction.create({
+            userId: user._id,
+            type: 'task_completion',
+            amount: 5,
+            balanceAfter: user.coins,
+            reason: `Completed quest via stopwatch: ${finalName}`,
+            referenceId: taskRef,
+            metadata: {
+              sessionId: session._id,
+              taskName: finalName,
+              actualSeconds: elapsedSeconds,
+              dateStr,
+            },
+          });
+          coinsAwarded = 5;
+          session.coinsEarned = 5;
+        } catch (e) {
+          user.coins = Math.max(0, (user.coins || 0) - 5);
+          coinsAwarded = 0;
+        }
+      }
+    }
+
+    if (coinsAwarded > 0 || isTaskCompleted) {
+      if (user.pet && user.pet.isAlive) {
+        user.pet.affection = Math.min(100, (user.pet.affection || 50) + 5);
+        user.pet.vitality = Math.min(100, (user.pet.vitality || 50) + 3);
+        user.markModified('pet');
+      }
+      user.markModified('coins');
+    }
+
+    await Promise.all([user.save(), session.save()]);
+
     console.log(
-      `[Stopwatch Service] Saved session: ${session._id} for "${finalName}" (${elapsedSeconds}s, ${actualMinutes}m) user: ${req.user._id} isExistingTask: ${isExistingTask} (Color: ${assignedColor})`
+      `[Stopwatch Service] Saved session: ${session._id} for "${finalName}" (${elapsedSeconds}s, ${actualMinutes}m) user: ${req.user._id} isExistingTask: ${isExistingTask} CoinsAwarded: ${coinsAwarded} (Color: ${assignedColor})`
     );
 
     return res.status(201).json({
       success: true,
       message: isExistingTask
-        ? `Stopwatch session for "${finalName}" saved to daily task progress!`
+        ? `Stopwatch session for "${finalName}" saved to daily task progress!${coinsAwarded > 0 ? ' +5 focus coins awarded!' : ''}`
         : `Stopwatch session for "${finalName}" saved to focus history!`,
       session,
       isExistingTask,
       progress: progressResult?.progress || null,
       remainingMinutes: progressResult?.remainingMinutes ?? null,
       completedMinutes: progressResult?.completedMinutes ?? null,
-      isCompleted: progressResult?.isCompleted ?? false,
-      userCoins: req.user.coins,
-      timetable: req.user.weeklyTimetable,
+      isCompleted: isTaskCompleted,
+      coinsEarned: coinsAwarded,
+      coinsAwarded,
+      userCoins: user.coins,
+      user,
+      timetable: user.weeklyTimetable,
     });
   } catch (error) {
     console.error('[Pomodoro Error] Stopwatch save:', error);

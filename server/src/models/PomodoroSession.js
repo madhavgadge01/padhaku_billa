@@ -24,6 +24,12 @@ const PomodoroSessionSchema = new mongoose.Schema(
       default: 'deep_focus',
       index: true,
     },
+    timerType: {
+      type: String,
+      enum: ['normal', 'pomodoro', 'stopwatch'],
+      default: 'normal',
+      index: true,
+    },
     activityDescription: {
       type: String,
       default: '',
@@ -97,9 +103,45 @@ const PomodoroSessionSchema = new mongoose.Schema(
       required: true,
       default: Date.now,
     },
+    startedAt: {
+      type: Date,
+      default: Date.now,
+    },
+    pausedAt: {
+      type: Date,
+      default: null,
+    },
+    resumedAt: {
+      type: Date,
+      default: null,
+    },
     endTime: {
       type: Date,
     },
+    endedAt: {
+      type: Date,
+      default: null,
+    },
+    lastUpdatedAt: {
+      type: Date,
+      default: Date.now,
+    },
+    expiresAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+    accumulatedFocusDuration: {
+      type: Number,
+      default: 0,
+    },
+    intervals: [
+      {
+        startedAt: { type: Date, required: true },
+        endedAt: { type: Date, default: null },
+        durationSeconds: { type: Number, default: 0 },
+      },
+    ],
     expectedEndTime: {
       type: Date,
       default: null,
@@ -145,8 +187,9 @@ const PomodoroSessionSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['in-progress', 'paused', 'completed', 'stopped', 'interrupted'],
+      enum: ['in-progress', 'paused', 'completed', 'stopped', 'interrupted', 'expired'],
       default: 'in-progress',
+      index: true,
     },
     dateStr: {
       type: String, // 'YYYY-MM-DD'

@@ -22,7 +22,7 @@ const TaskSchema = new mongoose.Schema(
     },
     colorTag: {
       type: String,
-      default: '#10b981', // Green for English, Red for DSA, etc.
+      default: '#10b981',
     },
     currentStreak: {
       type: Number,

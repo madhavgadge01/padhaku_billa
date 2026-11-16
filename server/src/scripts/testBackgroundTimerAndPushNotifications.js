@@ -20,9 +20,7 @@ const mongoUri = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/lifelevel
 const jwtSecret = process.env.JWT_SECRET || 'super_secret_lifelevel_rpg_key_2026_jwt';
 
 async function runBackgroundTimerTestSuite() {
-  console.log('\n================================================================');
-  console.log('⏰ PADGAKU BILLA — BACKGROUND TIMER & WEB PUSH TEST SUITE');
-  console.log('================================================================\n');
+ 
 
   try {
     await mongoose.connect(mongoUri, { serverSelectionTimeoutMS: 4000 });

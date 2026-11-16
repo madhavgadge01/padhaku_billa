@@ -5,7 +5,7 @@ import { isRestDayForUser } from '../utils/streakEngine.js';
 
 const router = express.Router();
 
-// 1. Get Pet Status
+
 router.get('/status', requireAuth, async (req, res) => {
   try {
     const user = req.user;
@@ -44,7 +44,7 @@ router.post('/feed', requireAuth, async (req, res) => {
   }
 });
 
-// 3. Hydrate Pet with Water (Costs 1 coin)
+
 router.post('/water', requireAuth, async (req, res) => {
   try {
     const user = req.user;

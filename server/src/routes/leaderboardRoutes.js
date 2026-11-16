@@ -11,11 +11,12 @@ import {
 const router = express.Router();
 
 /**
- * Calculates start & end UTC timestamps for local calendar day and week
+ * Calculates start & end UTC timestamps for local calendar day, week, and the last 14 days
  */
-const getLeaderboardDateBoundaries = (tzOffsetMinutes = 0) => {
+const getLeaderboardDateBoundaries = (tzOffsetMinutes = 0, selectedDaysAgo = 0) => {
   const now = new Date();
   const safeOffset = !isNaN(tzOffsetMinutes) ? Number(tzOffsetMinutes) : 0;
+  const safeDaysAgo = Math.max(0, Math.min(14, !isNaN(selectedDaysAgo) ? Number(selectedDaysAgo) : 0));
 
   // Client local time reference in ms
   const clientLocalMs = now.getTime() - safeOffset * 60 * 1000;
@@ -36,12 +37,49 @@ const getLeaderboardDateBoundaries = (tzOffsetMinutes = 0) => {
   const weekStartUtc = new Date(Date.UTC(year, month, day - mondayDist) + safeOffset * 60 * 1000);
   const weekEndUtc = new Date(Date.UTC(year, month, day - mondayDist + 7) + safeOffset * 60 * 1000);
 
+  // Construct 15 available days (0 = Today, 1 = Yesterday, ..., 14 = 14 days ago)
+  const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const availableDays = [];
+
+  for (let d = 0; d <= 14; d++) {
+    const dayStartUtc = new Date(Date.UTC(year, month, day - d) + safeOffset * 60 * 1000);
+    const dayEndUtc = new Date(Date.UTC(year, month, day - d + 1) + safeOffset * 60 * 1000);
+
+    const refDate = new Date(Date.UTC(year, month, day - d));
+    const yStr = refDate.getUTCFullYear();
+    const mStr = String(refDate.getUTCMonth() + 1).padStart(2, '0');
+    const dStr = String(refDate.getUTCDate()).padStart(2, '0');
+    const dateStr = `${yStr}-${mStr}-${dStr}`;
+
+    const dayName = weekdays[refDate.getUTCDay()];
+    const monthName = months[refDate.getUTCMonth()];
+    const dayNum = refDate.getUTCDate();
+
+    const label = d === 0 ? 'Today' : d === 1 ? 'Yesterday' : `${dayName}, ${dayNum} ${monthName}`;
+    const shortLabel = d === 0 ? 'Today' : d === 1 ? 'Yesterday' : `${dayNum} ${monthName}`;
+
+    availableDays.push({
+      daysAgo: d,
+      dateStr,
+      label,
+      shortLabel,
+      dayStartUtc,
+      dayEndUtc,
+    });
+  }
+
+  const selectedDay = availableDays[safeDaysAgo];
+
   return {
     todayStartUtc,
     todayEndUtc,
     weekStartUtc,
     weekEndUtc,
     safeOffset,
+    selectedDaysAgo: safeDaysAgo,
+    selectedDay,
+    availableDays,
   };
 };
 
@@ -68,19 +106,29 @@ const assignCompetitionRanks = (list, durationKey) => {
  * GET /api/leaderboard
  * Query params:
  * - mode: 'today' | 'week' (default: 'today')
+ * - daysAgo: 0..14 (optional, default: 0 - only applies to 'today' day mode)
  * - page: number (optional)
  * - limit: number (optional)
  */
 router.get('/', async (req, res) => {
   try {
     const mode = req.query.mode === 'week' ? 'week' : 'today';
+    const rawDaysAgo = parseInt(req.query.daysAgo, 10);
+    const selectedDaysAgo = Math.max(0, Math.min(14, isNaN(rawDaysAgo) ? 0 : rawDaysAgo));
     const tzOffset = req.headers['x-timezone-offset'] !== undefined
       ? Number(req.headers['x-timezone-offset'])
       : (req.query.tzOffset !== undefined ? Number(req.query.tzOffset) : 0);
 
-    const { todayStartUtc, todayEndUtc, weekStartUtc, weekEndUtc } =
-      getLeaderboardDateBoundaries(tzOffset);
-    const fourteenDaysAgoUtc = new Date(todayEndUtc.getTime() - 14 * 24 * 60 * 60 * 1000);
+    const {
+      todayStartUtc,
+      todayEndUtc,
+      weekStartUtc,
+      weekEndUtc,
+      selectedDay,
+      availableDays,
+    } = getLeaderboardDateBoundaries(tzOffset, selectedDaysAgo);
+
+    const fourteenDaysAgoUtc = availableDays[14].dayStartUtc;
 
     // Reconcile stale in-progress sessions across all users before ranking
     await reconcileAllOrphanedSessions();
@@ -105,6 +153,86 @@ router.get('/', async (req, res) => {
       ],
     };
 
+    // Build aggregation group fields including all 15 individual day windows
+    const groupFields = {
+      _id: '$userId',
+      todayMinutes: {
+        $sum: {
+          $cond: [
+            {
+              $and: [
+                { $gte: ['$startTime', todayStartUtc] },
+                { $lt: ['$startTime', todayEndUtc] },
+              ],
+            },
+            focusMinutesExpr,
+            0,
+          ],
+        },
+      },
+      weekMinutes: {
+        $sum: {
+          $cond: [
+            {
+              $and: [
+                { $gte: ['$startTime', weekStartUtc] },
+                { $lt: ['$startTime', weekEndUtc] },
+              ],
+            },
+            focusMinutesExpr,
+            0,
+          ],
+        },
+      },
+      fourteenDaysMinutes: {
+        $sum: {
+          $cond: [
+            {
+              $and: [
+                { $gte: ['$startTime', fourteenDaysAgoUtc] },
+                { $lt: ['$startTime', todayEndUtc] },
+              ],
+            },
+            focusMinutesExpr,
+            0,
+          ],
+        },
+      },
+      lifetimeMinutes: {
+        $sum: focusMinutesExpr,
+      },
+      distinctDates: {
+        $addToSet: {
+          $ifNull: [
+            '$dateStr',
+            { $dateToString: { format: '%Y-%m-%d', date: '$startTime' } },
+          ],
+        },
+      },
+      totalCompletedSessions: {
+        $sum: {
+          $cond: [{ $eq: ['$status', 'completed'] }, 1, 0],
+        },
+      },
+    };
+
+    availableDays.forEach((ad, idx) => {
+      groupFields[`day_${idx}`] = {
+        $sum: {
+          $cond: [
+            {
+              $and: [
+                { $gte: ['$startTime', ad.dayStartUtc] },
+                { $lt: ['$startTime', ad.dayEndUtc] },
+              ],
+            },
+            focusMinutesExpr,
+            0,
+          ],
+        },
+      };
+    });
+
     // 1. Aggregate focus minutes and completed sessions for all users
     const sessionStats = await PomodoroSession.aggregate([
       {
@@ -117,67 +245,7 @@ router.get('/', async (req, res) => {
         },
       },
       {
-        $group: {
-          _id: '$userId',
-          todayMinutes: {
-            $sum: {
-              $cond: [
-                {
-                  $and: [
-                    { $gte: ['$startTime', todayStartUtc] },
-                    { $lt: ['$startTime', todayEndUtc] },
-                  ],
-                },
-                focusMinutesExpr,
-                0,
-              ],
-            },
-          },
-          weekMinutes: {
-            $sum: {
-              $cond: [
-                {
-                  $and: [
-                    { $gte: ['$startTime', weekStartUtc] },
-                    { $lt: ['$startTime', weekEndUtc] },
-                  ],
-                },
-                focusMinutesExpr,
-                0,
-              ],
-            },
-          },
-          fourteenDaysMinutes: {
-            $sum: {
-              $cond: [
-                {
-                  $and: [
-                    { $gte: ['$startTime', fourteenDaysAgoUtc] },
-                    { $lt: ['$startTime', todayEndUtc] },
-                  ],
-                },
-                focusMinutesExpr,
-                0,
-              ],
-            },
-          },
-          lifetimeMinutes: {
-            $sum: focusMinutesExpr,
-          },
-          distinctDates: {
-            $addToSet: {
-              $ifNull: [
-                '$dateStr',
-                { $dateToString: { format: '%Y-%m-%d', date: '$startTime' } },
-              ],
-            },
-          },
-          totalCompletedSessions: {
-            $sum: {
-              $cond: [{ $eq: ['$status', 'completed'] }, 1, 0],
-            },
-          },
-        },
+        $group: groupFields,
       },
     ]);
 
@@ -204,6 +272,15 @@ router.get('/', async (req, res) => {
         totalCompletedSessions: 0,
       };
 
+      const dailyHistory = availableDays.map((ad, idx) => ({
+        daysAgo: ad.daysAgo,
+        dateStr: ad.dateStr,
+        label: ad.label,
+        shortLabel: ad.shortLabel,
+        minutes: Math.round(stats[`day_${idx}`] || 0),
+      }));
+
+      const selectedDayMinutes = Math.round(stats[`day_${selectedDaysAgo}`] || 0);
       const activeDays = stats.distinctDates?.length || 0;
       const avgDailyMinutes = activeDays > 0 ? Math.round(stats.lifetimeMinutes / activeDays) : 0;
 
@@ -232,9 +309,11 @@ router.get('/', async (req, res) => {
         name: u.name || 'Adventurer',
         avatar: u.selectedAvatar || 'cat',
         streak: u.streaks?.currentGlobalStreak || 0,
+        selectedDayMinutes,
         todayMinutes: Math.round(stats.todayMinutes || 0),
         weekMinutes: Math.round(stats.weekMinutes || 0),
         lifetimeMinutes: Math.round(stats.lifetimeMinutes || 0),
+        dailyHistory,
         avgDailyMinutes,
         activeDays,
         totalSessions: stats.totalCompletedSessions,
@@ -277,11 +356,11 @@ router.get('/', async (req, res) => {
       });
     };
 
-    // Calculate today ranks
-    sortCandidates(candidates, 'todayMinutes');
-    assignCompetitionRanks(candidates, 'todayMinutes');
+    // Calculate selected day ranks
+    sortCandidates(candidates, 'selectedDayMinutes');
+    assignCompetitionRanks(candidates, 'selectedDayMinutes');
     candidates.forEach((c) => {
-      c.todayRank = c.rank;
+      c.dayRank = c.rank;
     });
 
     // Calculate week ranks
@@ -293,9 +372,9 @@ router.get('/', async (req, res) => {
 
     // Final sort according to requested mode
     if (mode === 'today') {
-      sortCandidates(candidates, 'todayMinutes');
+      sortCandidates(candidates, 'selectedDayMinutes');
       candidates.forEach((c) => {
-        c.rank = c.todayRank;
+        c.rank = c.dayRank;
       });
     } else {
       sortCandidates(candidates, 'weekMinutes');
@@ -307,6 +386,9 @@ router.get('/', async (req, res) => {
     return res.json({
       success: true,
       mode,
+      selectedDaysAgo,
+      selectedDay,
+      availableDays,
       totalUsers: candidates.length,
       rankings: candidates,
       boundaries: {
@@ -314,6 +396,8 @@ router.get('/', async (req, res) => {
         todayEnd: todayEndUtc,
         weekStart: weekStartUtc,
         weekEnd: weekEndUtc,
+        selectedDayStart: selectedDay.dayStartUtc,
+        selectedDayEnd: selectedDay.dayEndUtc,
       },
     });
   } catch (error) {
@@ -344,9 +428,14 @@ router.get('/:userId/profile', async (req, res) => {
       return res.status(404).json({ success: false, message: 'User not found.' });
     }
 
-    const { todayStartUtc, todayEndUtc, weekStartUtc, weekEndUtc } =
-      getLeaderboardDateBoundaries(tzOffset);
-    const fourteenDaysAgoUtc = new Date(todayEndUtc.getTime() - 14 * 24 * 60 * 60 * 1000);
+    const {
+      todayStartUtc,
+      todayEndUtc,
+      weekStartUtc,
+      weekEndUtc,
+      availableDays,
+    } = getLeaderboardDateBoundaries(tzOffset, 0);
+    const fourteenDaysAgoUtc = availableDays[14].dayStartUtc;
 
     // Reconcile stale sessions for this user before computing mini-profile stats
     await reconcileOrphanedSessions(userId);
@@ -367,6 +456,7 @@ router.get('/:userId/profile', async (req, res) => {
     let lifetimeMinutes = 0;
     let totalCompletedSessions = 0;
     const dateSet = new Set();
+    const dailyMinsMap = new Array(15).fill(0);
 
     sessions.forEach((s) => {
       const mins = calculateSessionFocusMinutes(s);
@@ -388,7 +478,21 @@ router.get('/:userId/profile', async (req, res) => {
         const ds = s.dateStr || d.toISOString().split('T')[0];
         dateSet.add(ds);
       }
+
+      availableDays.forEach((ad, idx) => {
+        if (d >= ad.dayStartUtc && d < ad.dayEndUtc) {
+          dailyMinsMap[idx] += mins;
+        }
+      });
     });
+
+    const dailyHistory = availableDays.map((ad, idx) => ({
+      daysAgo: ad.daysAgo,
+      dateStr: ad.dateStr,
+      label: ad.label,
+      shortLabel: ad.shortLabel,
+      minutes: Math.round(dailyMinsMap[idx] || 0),
+    }));
 
     todayMinutes = Math.round(todayMinutes);
     weekMinutes = Math.round(weekMinutes);
@@ -427,6 +531,7 @@ router.get('/:userId/profile', async (req, res) => {
         todayMinutes,
         weekMinutes,
         lifetimeMinutes,
+        dailyHistory,
         avgDailyMinutes,
         activeDays,
         totalSessions: totalCompletedSessions,

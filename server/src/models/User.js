@@ -209,7 +209,7 @@ const UserSchema = new mongoose.Schema(
     restDay: {
       enabled: {
         type: Boolean,
-        default: true,
+        default: false,
       },
       dayOfWeek: {
         type: Number,

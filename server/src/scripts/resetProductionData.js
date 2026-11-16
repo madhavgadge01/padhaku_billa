@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load environment variables
+
 const envPaths = [
   path.resolve(__dirname, '../../.env'),
   path.resolve(process.cwd(), 'server/.env'),
@@ -20,23 +20,21 @@ for (const p of envPaths) {
   }
 }
 
-const targetUrl = process.env.MONGODB_URL || process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/lifelevel';
+const targetUrl = process.env.MONGODB_URL || 'mongodb://127.0.0.1:27017/lifelevel';
 
 async function performCleanReset() {
-  console.log('========================================================');
-  console.log('🔄 LIFELEVEL INTENTIONAL PRODUCTION LAUNCH DATA RESET');
-  console.log('========================================================');
 
-  // Verify backup exists
+
+
   const backupDir = path.resolve(__dirname, '../../backups');
   if (!fs.existsSync(backupDir) || fs.readdirSync(backupDir).length === 0) {
     throw new Error('Safety check failed: No database backup found in server/backups. Aborting.');
   }
 
   const latestBackup = fs.readdirSync(backupDir).sort().reverse()[0];
-  console.log(`✅ Verified safety backup exists: ${latestBackup}`);
+  console.log(`Verified safety backup exists: ${latestBackup}`);
 
-  // Connect to target DB
+
   console.log(`[Database] Connecting to target database...`);
   let conn = null;
   try {
@@ -53,19 +51,17 @@ async function performCleanReset() {
 
   const db = conn.connection.db;
 
-  // Verify collections exist before reset
+
   const collections = (await db.listCollections().toArray()).map((c) => c.name);
   console.log('Active collections detected in database:', collections);
 
-  // 1. Reset LifeLevel demo users
   let deletedUsers = 0;
   if (collections.includes('users')) {
     const res = await db.collection('users').deleteMany({});
     deletedUsers = res.deletedCount;
-    console.log(`🧹 Reset users collection: removed ${deletedUsers} development/demo user accounts.`);
+    console.log(` Reset users collection: removed ${deletedUsers} development/demo user accounts.`);
   }
 
-  // 2. Reset LifeLevel focus sessions
   let deletedSessions = 0;
   if (collections.includes('pomodorosessions')) {
     const res = await db.collection('pomodorosessions').deleteMany({});

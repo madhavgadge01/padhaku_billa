@@ -12,6 +12,10 @@ import {
   Calendar,
   AlertCircle,
   TrendingUp,
+  ChevronLeft,
+  ChevronRight,
+  RotateCcw,
+  History,
 } from 'lucide-react';
 import { sounds } from '../audio/soundEffects.js';
 import { api } from '../services/api.js';
@@ -27,6 +31,8 @@ import { FocusLevelCard } from '../components/FocusLevelCard.jsx';
 
 export const LeaderboardPage = ({ user, onNavigate: _onNavigate }) => {
   const [mode, setMode] = useState('today'); // 'today' | 'week'
+  const [daysAgo, setDaysAgo] = useState(0); // 0 (Today), 1 (Yesterday) ... up to 14
+  const [availableDays, setAvailableDays] = useState([]);
   const [rankings, setRankings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -43,15 +49,18 @@ export const LeaderboardPage = ({ user, onNavigate: _onNavigate }) => {
   const currentUserId = user?._id || user?.id || '';
 
   // Fetch rankings from backend
-  const fetchRankings = async (targetMode = mode, isSilent = false) => {
+  const fetchRankings = async (targetMode = mode, targetDaysAgo = daysAgo, isSilent = false) => {
     try {
       if (!isSilent) setLoading(true);
       else setRefreshing(true);
       setError(null);
 
-      const res = await api.getLeaderboard(targetMode);
+      const res = await api.getLeaderboard(targetMode, targetDaysAgo);
       if (res && res.success) {
         setRankings(res.rankings || []);
+        if (res.availableDays && res.availableDays.length > 0) {
+          setAvailableDays(res.availableDays);
+        }
       } else {
         throw new Error(res?.message || 'Failed to load rankings.');
       }
@@ -65,8 +74,8 @@ export const LeaderboardPage = ({ user, onNavigate: _onNavigate }) => {
   };
 
   useEffect(() => {
-    fetchRankings(mode);
-  }, [mode]);
+    fetchRankings(mode, daysAgo);
+  }, [mode, daysAgo]);
 
   // Mode switcher
   const handleModeChange = (newMode) => {
@@ -76,16 +85,32 @@ export const LeaderboardPage = ({ user, onNavigate: _onNavigate }) => {
     setVisibleCount(30);
   };
 
+  // 14-day historical day switcher
+  const handleDayChange = (newDaysAgo) => {
+    const clamped = Math.max(0, Math.min(14, newDaysAgo));
+    if (clamped === daysAgo && mode === 'today') return;
+    sounds.playClick();
+    if (mode !== 'today') setMode('today');
+    setDaysAgo(clamped);
+    setVisibleCount(30);
+  };
+
   // Manual refresh
   const handleRefresh = () => {
     sounds.playClick();
-    fetchRankings(mode, true);
+    fetchRankings(mode, daysAgo, true);
   };
 
-  // Find signed-in user's entry in current mode
+  // Find signed-in user's entry in current mode & day
   const currentUserEntry = rankings.find(
     (item) => item.id === currentUserId || (currentUserId && item.id?.toString() === currentUserId.toString())
   );
+
+  const activeDayObj = availableDays.find((d) => d.daysAgo === daysAgo) || {
+    daysAgo,
+    label: daysAgo === 0 ? 'Today' : daysAgo === 1 ? 'Yesterday' : `${daysAgo} days ago`,
+    shortLabel: daysAgo === 0 ? 'Today' : daysAgo === 1 ? 'Yesterday' : `${daysAgo}d ago`,
+  };
 
   // Open user profile modal & enrich with live profile details
   const handleOpenUserProfile = async (item) => {
@@ -132,8 +157,8 @@ export const LeaderboardPage = ({ user, onNavigate: _onNavigate }) => {
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 pb-16 select-none">
-      {/* 1. Header & Controls */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      {/* 1. Header */}
+      <div className="flex items-center justify-between gap-4">
         <div>
           <div className="flex items-center space-x-2">
             <h2 className="text-2xl font-black text-[#1C2A24] dark:text-[#F2F7F4] tracking-tight">
@@ -147,101 +172,138 @@ export const LeaderboardPage = ({ user, onNavigate: _onNavigate }) => {
             Real recorded focus sessions and unbroken study streaks across the Padhaku Billa community.
           </p>
         </div>
-
-        {/* Refresh Button */}
-        <button
-          onClick={handleRefresh}
-          disabled={loading || refreshing}
-          className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-white dark:bg-[#162420] border border-[#EAE5DD] dark:border-[#253D35] text-xs font-bold text-[#1C2A24] dark:text-[#F2F7F4] hover:bg-[#FAF8F5] dark:hover:bg-[#1C2E29] transition cursor-pointer self-start sm:self-auto shadow-2xs"
-          title="Refresh rankings with latest sessions"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin text-[#1B3B2F] dark:text-[#A3D9C9]' : ''}`} />
-          <span>{refreshing ? 'Refreshing...' : 'Refresh'}</span>
-        </button>
       </div>
 
-      {/* 2. Mode Selector Toggle & Search Bar */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white dark:bg-[#162420] p-2 sm:p-2.5 rounded-3xl border border-[#EAE5DD] dark:border-[#253D35] shadow-xs">
-        {/* Toggle [ Today ] [ This Week ] */}
-        <div className="flex items-center space-x-1 bg-[#FAF8F5] dark:bg-[#0F1A16] p-1 rounded-2xl border border-[#EAE5DD]/80 dark:border-[#253D35]/80">
-          <button
-            type="button"
-            onClick={() => handleModeChange('today')}
-            className={`flex-1 sm:flex-initial px-5 py-2 rounded-xl text-xs font-black transition cursor-pointer flex items-center justify-center space-x-1.5 ${
-              mode === 'today'
-                ? 'bg-[#1B3B2F] text-white shadow-xs'
-                : 'text-[#576560] dark:text-[#8BA398] hover:text-[#1C2A24] dark:hover:text-[#F2F7F4]'
-            }`}
-          >
-            <Clock className="w-3.5 h-3.5" />
-            <span>Today</span>
-          </button>
+      {/* 2. Unified Master Controls (Mode, History Stepper & Search in ONE clean hub) */}
+      <div className="bg-white dark:bg-[#162420] p-2.5 sm:p-3 rounded-3xl border border-[#EAE5DD] dark:border-[#253D35] shadow-xs space-y-2.5">
+        {/* Top Control Line: Segmented Mode Toggle + Search + Refresh */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
+          {/* Segmented Mode Toggle [ Today ] [ This Week ] */}
+          <div className="flex items-center space-x-1 bg-[#FAF8F5] dark:bg-[#0F1A16] p-1 rounded-2xl border border-[#EAE5DD]/80 dark:border-[#253D35]/80">
+            <button
+              type="button"
+              onClick={() => handleModeChange('today')}
+              className={`flex-1 sm:flex-initial px-4 sm:px-5 py-2 rounded-xl text-xs font-black transition cursor-pointer flex items-center justify-center space-x-1.5 ${
+                mode === 'today'
+                  ? 'bg-[#1B3B2F] text-white shadow-xs'
+                  : 'text-[#576560] dark:text-[#8BA398] hover:text-[#1C2A24] dark:hover:text-[#F2F7F4]'
+              }`}
+            >
+              <Clock className="w-3.5 h-3.5" />
+              <span>Today</span>
+            </button>
 
-          <button
-            type="button"
-            onClick={() => handleModeChange('week')}
-            className={`flex-1 sm:flex-initial px-5 py-2 rounded-xl text-xs font-black transition cursor-pointer flex items-center justify-center space-x-1.5 ${
-              mode === 'week'
-                ? 'bg-[#1B3B2F] text-white shadow-xs'
-                : 'text-[#576560] dark:text-[#8BA398] hover:text-[#1C2A24] dark:hover:text-[#F2F7F4]'
-            }`}
-          >
-            <Calendar className="w-3.5 h-3.5" />
-            <span>This Week</span>
-          </button>
-        </div>
-
-        {/* Search Filter */}
-        <div className="relative flex-1 sm:max-w-xs">
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search adventurers..."
-            className="w-full bg-[#FAF8F5] dark:bg-[#0F1A16] border border-[#EAE5DD] dark:border-[#253D35] rounded-2xl pl-9 pr-4 py-2 text-xs text-[#1C2A24] dark:text-[#F2F7F4] placeholder-[#576560] dark:placeholder-[#6E8079] focus:outline-none focus:border-[#2B5A52]"
-          />
-          <Search className="w-3.5 h-3.5 text-[#576560] dark:text-[#8BA398] absolute left-3 top-3 pointer-events-none" />
-        </div>
-      </div>
-
-      {/* 3. Signed-In User Standing Banner */}
-      {currentUserEntry && (
-        <div className="p-3.5 sm:p-4 rounded-3xl bg-gradient-to-r from-[#E8F5EE] via-[#E8F5EE]/80 to-[#FAF8F5] dark:from-[#162420] dark:via-[#162420]/80 dark:to-[#0F1A16] border border-[#C8E6D5] dark:border-[#2B5246] flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
-          <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 rounded-2xl bg-[#1B3B2F] text-white flex items-center justify-center text-lg font-black shadow-xs">
-              {getAvatarEmoji(currentUserEntry.avatar)}
-            </div>
-            <div>
-              <div className="flex items-center space-x-2">
-                <span className="text-xs font-black text-[#1C2A24] dark:text-[#F2F7F4]">
-                  Your Ranking
-                </span>
-                <span className="px-2 py-0.5 rounded-full bg-[#1B3B2F] text-white text-[10px] font-black tracking-wide uppercase">
-                  Rank #{currentUserEntry.rank}
-                </span>
-              </div>
-              <span className="text-[11px] text-[#576560] dark:text-[#8BA398] font-medium">
-                {mode === 'week' ? 'Weekly Focus' : "Today's Focus"}:{' '}
-                <strong className="text-[#1B3B2F] dark:text-[#A3D9C9] font-mono">
-                  {formatStudyDuration(mode === 'week' ? currentUserEntry.weekMinutes : currentUserEntry.todayMinutes)}
-                </strong>{' '}
-                · {currentUserEntry.streak}d Streak
-              </span>
-            </div>
+            <button
+              type="button"
+              onClick={() => handleModeChange('week')}
+              className={`flex-1 sm:flex-initial px-4 sm:px-5 py-2 rounded-xl text-xs font-black transition cursor-pointer flex items-center justify-center space-x-1.5 ${
+                mode === 'week'
+                  ? 'bg-[#1B3B2F] text-white shadow-xs'
+                  : 'text-[#576560] dark:text-[#8BA398] hover:text-[#1C2A24] dark:hover:text-[#F2F7F4]'
+              }`}
+            >
+              <Calendar className="w-3.5 h-3.5" />
+              <span>This Week</span>
+            </button>
           </div>
 
-          <button
-            type="button"
-            onClick={handleJumpToMyRow}
-            className="flex items-center justify-center space-x-1 px-4 py-2 rounded-xl bg-white dark:bg-[#1C2E29] border border-[#C8E6D5] dark:border-[#2B5246] text-xs font-bold text-[#1B3B2F] dark:text-[#A3D9C9] hover:bg-[#D8EDE0] dark:hover:bg-[#253D35] transition cursor-pointer self-start sm:self-auto shadow-2xs"
-          >
-            <TrendingUp className="w-3.5 h-3.5" />
-            <span>Jump to My Row</span>
-          </button>
-        </div>
-      )}
+          {/* Search Filter + Refresh Button */}
+          <div className="flex items-center space-x-2 flex-1 sm:max-w-xs">
+            <div className="relative flex-1">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search adventurers..."
+                className="w-full bg-[#FAF8F5] dark:bg-[#0F1A16] border border-[#EAE5DD] dark:border-[#253D35] rounded-2xl pl-8 pr-3 py-2 text-xs text-[#1C2A24] dark:text-[#F2F7F4] placeholder-[#576560] dark:placeholder-[#6E8079] focus:outline-none focus:border-[#2B5A52]"
+              />
+              <Search className="w-3.5 h-3.5 text-[#576560] dark:text-[#8BA398] absolute left-2.5 top-2.5 pointer-events-none" />
+            </div>
 
-      {/* 4. Error State */}
+            <button
+              onClick={handleRefresh}
+              disabled={loading || refreshing}
+              className="p-2 rounded-2xl bg-[#FAF8F5] dark:bg-[#0F1A16] border border-[#EAE5DD] dark:border-[#253D35] text-[#1C2A24] dark:text-[#F2F7F4] hover:bg-[#EAE5DD]/60 dark:hover:bg-[#1C2E29] transition cursor-pointer shadow-2xs flex-shrink-0"
+              title="Refresh rankings"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin text-[#1B3B2F] dark:text-[#A3D9C9]' : ''}`} />
+            </button>
+          </div>
+        </div>
+
+        {/* Inlined 14-Day History Stepper (Seamlessly inside the same card, active when mode === 'today') */}
+        {mode === 'today' && (
+          <div className="pt-2 border-t border-[#EAE5DD]/60 dark:border-[#253D35]/60 flex items-center justify-between gap-2 animate-in fade-in duration-150">
+            <div className="flex items-center space-x-1.5 min-w-0">
+              <button
+                type="button"
+                onClick={() => handleDayChange(daysAgo + 1)}
+                disabled={daysAgo >= 14 || loading}
+                className="p-1.5 rounded-xl border border-[#EAE5DD] dark:border-[#253D35] text-[#576560] dark:text-[#8BA398] hover:text-[#1C2A24] dark:hover:text-[#F2F7F4] hover:bg-[#FAF8F5] dark:hover:bg-[#1C2E29] disabled:opacity-30 disabled:pointer-events-none transition cursor-pointer flex-shrink-0"
+                title="Go to earlier day"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </button>
+
+              <div className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-[#FAF8F5] dark:bg-[#0F1A16] border border-[#EAE5DD]/80 dark:border-[#253D35]/80 text-xs font-black text-[#1C2A24] dark:text-[#F2F7F4]">
+                <Calendar className="w-3 h-3 text-[#1B3B2F] dark:text-[#A3D9C9] flex-shrink-0" />
+                <span>{activeDayObj.label}</span>
+                {daysAgo > 0 && (
+                  <span className="text-[10px] text-[#576560] dark:text-[#8BA398] font-bold">
+                    ({daysAgo}d ago)
+                  </span>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => handleDayChange(daysAgo - 1)}
+                disabled={daysAgo <= 0 || loading}
+                className="p-1.5 rounded-xl border border-[#EAE5DD] dark:border-[#253D35] text-[#576560] dark:text-[#8BA398] hover:text-[#1C2A24] dark:hover:text-[#F2F7F4] hover:bg-[#FAF8F5] dark:hover:bg-[#1C2E29] disabled:opacity-30 disabled:pointer-events-none transition cursor-pointer flex-shrink-0"
+                title="Go to later day"
+              >
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+
+              {daysAgo > 0 && (
+                <button
+                  type="button"
+                  onClick={() => handleDayChange(0)}
+                  className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-xl bg-[#E8F5EE] dark:bg-[#1C2E29] text-[#1B3B2F] dark:text-[#A3D9C9] text-[11px] font-black hover:bg-[#D8EDE0] transition cursor-pointer shadow-2xs ml-1"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>Today</span>
+                </button>
+              )}
+            </div>
+
+            {/* Quick Day Shortcut Chips */}
+            <div className="hidden sm:flex items-center space-x-1 text-[11px]">
+              {[0, 1, 2, 3, 7].map((d) => {
+                const item = availableDays.find((ad) => ad.daysAgo === d);
+                if (!item) return null;
+                const isSelected = daysAgo === d;
+                return (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => handleDayChange(d)}
+                    className={`px-2.5 py-1 rounded-xl font-bold transition cursor-pointer ${
+                      isSelected
+                        ? 'bg-[#1B3B2F] text-white shadow-2xs'
+                        : 'text-[#576560] dark:text-[#8BA398] hover:bg-[#FAF8F5] dark:hover:bg-[#1C2E29]'
+                    }`}
+                  >
+                    {d === 0 ? 'Today' : d === 1 ? 'Yesterday' : `${d}d ago`}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 3. Error State */}
       {error && (
         <div className="p-4 rounded-3xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-300 flex items-center space-x-3 text-xs">
           <AlertCircle className="w-5 h-5 flex-shrink-0" />
@@ -257,8 +319,50 @@ export const LeaderboardPage = ({ user, onNavigate: _onNavigate }) => {
         </div>
       )}
 
-      {/* 5. Rankings Table */}
+      {/* 4. Rankings Table (With Docked Pinned User Standing Strip) */}
       <div className="bg-white dark:bg-[#162420] rounded-3xl border border-[#EAE5DD] dark:border-[#253D35] overflow-hidden shadow-sm">
+        {/* Docked Pinned User Standing Strip right inside the table header */}
+        {currentUserEntry && (
+          <div className="px-4 py-2.5 bg-gradient-to-r from-[#E8F5EE] via-[#E8F5EE]/80 to-[#FAF8F5] dark:from-[#162420] dark:via-[#162420]/80 dark:to-[#0F1A16] border-b border-[#C8E6D5] dark:border-[#2B5246] flex items-center justify-between gap-3 text-xs">
+            <div className="flex items-center space-x-2.5 min-w-0">
+              <div className="w-7 h-7 rounded-xl bg-[#1B3B2F] text-white flex items-center justify-center text-sm font-black flex-shrink-0 shadow-2xs">
+                {getAvatarEmoji(currentUserEntry.avatar)}
+              </div>
+              <div className="flex items-center space-x-2 truncate">
+                <span className="px-1.5 py-0.2 rounded-md bg-[#1B3B2F] text-white text-[9px] font-black uppercase tracking-wider flex-shrink-0">
+                  YOU
+                </span>
+                <span className="font-black text-[#1C2A24] dark:text-[#F2F7F4]">
+                  Rank #{currentUserEntry.rank}
+                </span>
+                <span className="text-[#8A9791] dark:text-[#6E8079]">·</span>
+                <span className="font-mono font-bold text-[#1B3B2F] dark:text-[#A3D9C9]">
+                  {formatStudyDuration(
+                    mode === 'week'
+                      ? currentUserEntry.weekMinutes
+                      : currentUserEntry.selectedDayMinutes !== undefined
+                      ? currentUserEntry.selectedDayMinutes
+                      : currentUserEntry.todayMinutes
+                  )}
+                </span>
+                <span className="text-[#8A9791] dark:text-[#6E8079] hidden xs:inline">·</span>
+                <span className="text-[#D97724] dark:text-[#F59E0B] font-bold hidden xs:inline">
+                  {currentUserEntry.streak}d streak
+                </span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleJumpToMyRow}
+              className="inline-flex items-center space-x-1 px-3 py-1.5 rounded-xl bg-white dark:bg-[#1C2E29] border border-[#C8E6D5] dark:border-[#2B5246] text-[#1B3B2F] dark:text-[#A3D9C9] text-xs font-bold hover:bg-[#D8EDE0] transition cursor-pointer shadow-2xs flex-shrink-0"
+              title="Jump to your position in the list"
+            >
+              <span>Jump to My Row</span>
+              <TrendingUp className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
         {loading ? (
           /* Loading Skeleton */
           <div className="p-8 space-y-4">
@@ -288,7 +392,9 @@ export const LeaderboardPage = ({ user, onNavigate: _onNavigate }) => {
               {searchQuery
                 ? `No adventurers matched "${searchQuery}". Try a different name.`
                 : mode === 'today'
-                ? 'Complete your first focus session today to claim the #1 spot on the leaderboard!'
+                ? daysAgo === 0
+                  ? 'Complete your first focus session today to claim the #1 spot on the leaderboard!'
+                  : `No recorded study sessions on ${activeDayObj.label}.`
                 : 'Complete focus sessions this week to climb the community rankings!'}
             </p>
           </div>
@@ -297,7 +403,12 @@ export const LeaderboardPage = ({ user, onNavigate: _onNavigate }) => {
           <div className="divide-y divide-[#EAE5DD] dark:divide-[#253D35]">
             {displayedList.map((item, index) => {
               const isCurrentUser = item.id === currentUserId || (currentUserId && item.id?.toString() === currentUserId.toString());
-              const durationMinutes = mode === 'week' ? item.weekMinutes : item.todayMinutes;
+              const durationMinutes =
+                mode === 'week'
+                  ? item.weekMinutes
+                  : item.selectedDayMinutes !== undefined
+                  ? item.selectedDayMinutes
+                  : item.todayMinutes;
               const formattedTime = formatStudyDuration(durationMinutes);
 
               // Top 3 Podium Badges
@@ -429,7 +540,13 @@ export const LeaderboardPage = ({ user, onNavigate: _onNavigate }) => {
                     {/* Focus Time */}
                     <div>
                       <span className="text-[10px] uppercase tracking-wider font-extrabold text-[#576560] dark:text-[#8BA398] block">
-                        {mode === 'week' ? 'Week' : 'Today'}
+                        {mode === 'week'
+                          ? 'Week'
+                          : daysAgo === 0
+                          ? 'Today'
+                          : daysAgo === 1
+                          ? 'Yesterday'
+                          : activeDayObj.shortLabel}
                       </span>
                       <span className="text-xs sm:text-sm font-black text-[#1C2A24] dark:text-[#F2F7F4] font-mono">
                         {formattedTime}
@@ -550,17 +667,41 @@ export const LeaderboardPage = ({ user, onNavigate: _onNavigate }) => {
               <div className="flex items-center space-x-1.5">
                 <Trophy className="w-4 h-4 text-amber-500 fill-current" />
                 <span>
-                  {mode === 'week' ? 'This Week Rank' : "Today's Rank"}:{' '}
+                  {mode === 'week'
+                    ? 'This Week Rank'
+                    : daysAgo === 0
+                    ? "Today's Rank"
+                    : `${activeDayObj.shortLabel} Rank`}:{' '}
                   <strong className="text-sm font-black">#{selectedUser.rank}</strong>
                 </span>
               </div>
               <span className="text-[11px] text-[#576560] dark:text-[#8BA398] capitalize">
-                {mode === 'week' ? 'Weekly Competition' : 'Daily Competition'}
+                {mode === 'week'
+                  ? 'Weekly Competition'
+                  : daysAgo === 0
+                  ? 'Daily Competition'
+                  : activeDayObj.label}
               </span>
             </div>
 
             {/* Compact Stats Grid */}
             <div className="grid grid-cols-2 gap-2.5">
+              {daysAgo > 0 && selectedUser.selectedDayMinutes !== undefined && (
+                <div className="p-3 rounded-2xl bg-[#E8F5EE]/80 dark:bg-[#1C2E29]/80 border border-[#C8E6D5] dark:border-[#2B5246] col-span-2 flex items-center justify-between">
+                  <div>
+                    <span className="text-[10px] font-extrabold uppercase text-[#1B3B2F] dark:text-[#A3D9C9] block">
+                      {activeDayObj.label} Focus
+                    </span>
+                    <span className="text-sm font-black text-[#1C2A24] dark:text-[#F2F7F4] font-mono mt-0.5 block">
+                      {formatStudyDuration(selectedUser.selectedDayMinutes)}
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-[#1B3B2F] dark:text-[#A3D9C9] font-bold px-2 py-0.5 rounded-full bg-white dark:bg-[#162420] border border-[#C8E6D5] dark:border-[#2B5246]">
+                    Rank #{selectedUser.rank}
+                  </span>
+                </div>
+              )}
+
               <div className="p-3 rounded-2xl bg-[#FAF8F5] dark:bg-[#0F1A16] border border-[#EAE5DD] dark:border-[#253D35]">
                 <span className="text-[10px] font-extrabold uppercase text-[#576560] dark:text-[#8BA398] block">
                   Today's Focus
@@ -612,6 +753,96 @@ export const LeaderboardPage = ({ user, onNavigate: _onNavigate }) => {
                 isProfileView={true}
                 title={`${selectedUser.name}'s Focus Level`}
               />
+            </div>
+
+            {/* Past 14 Days Focus Breakdown */}
+            <div className="space-y-2 pt-1">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-1.5 text-xs font-black text-[#1C2A24] dark:text-[#F2F7F4]">
+                  <History className="w-4 h-4 text-[#1B3B2F] dark:text-[#A3D9C9]" />
+                  <span>Past 14 Days Study Record</span>
+                </div>
+                <span className="text-[10px] text-[#576560] dark:text-[#8BA398]">
+                  Daily hours
+                </span>
+              </div>
+
+              <div className="p-3 rounded-2xl bg-[#FAF8F5] dark:bg-[#0F1A16] border border-[#EAE5DD] dark:border-[#253D35] divide-y divide-[#EAE5DD]/60 dark:divide-[#253D35]/60 max-h-52 overflow-y-auto">
+                {selectedUser.dailyHistory && selectedUser.dailyHistory.length > 0 ? (
+                  selectedUser.dailyHistory.map((dItem) => {
+                    const isToday = dItem.daysAgo === 0;
+                    const isYesterday = dItem.daysAgo === 1;
+                    const isSelectedDay = mode === 'today' && dItem.daysAgo === daysAgo;
+                    const maxMins = Math.max(...selectedUser.dailyHistory.map((d) => d.minutes), 60);
+                    const percent = Math.min(100, Math.round((dItem.minutes / maxMins) * 100));
+
+                    return (
+                      <div
+                        key={dItem.daysAgo}
+                        className={`py-1.5 first:pt-0 last:pb-0 flex items-center justify-between text-xs ${
+                          isSelectedDay ? 'font-black' : ''
+                        }`}
+                      >
+                        <div className="flex items-center space-x-2 min-w-[115px]">
+                          <span
+                            className={`text-[11px] font-bold ${
+                              isSelectedDay
+                                ? 'text-[#1B3B2F] dark:text-[#A3D9C9] font-black'
+                                : isToday
+                                ? 'text-[#1B3B2F] dark:text-[#A3D9C9]'
+                                : isYesterday
+                                ? 'text-[#1C2A24] dark:text-[#F2F7F4]'
+                                : 'text-[#576560] dark:text-[#8BA398]'
+                            }`}
+                          >
+                            {dItem.label}
+                          </span>
+                          {isToday && (
+                            <span className="px-1.5 py-0.2 rounded text-[8px] font-black bg-[#1B3B2F] text-white">
+                              TODAY
+                            </span>
+                          )}
+                          {isSelectedDay && !isToday && (
+                            <span className="px-1.5 py-0.2 rounded text-[8px] font-black bg-[#E8F5EE] dark:bg-[#1C2E29] text-[#1B3B2F] dark:text-[#A3D9C9] border border-[#C8E6D5] dark:border-[#2B5246]">
+                              VIEWING
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Visual activity bar */}
+                        <div className="flex-1 mx-3 h-2 rounded-full bg-[#EAE5DD] dark:bg-[#253D35] overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all duration-300 ${
+                              dItem.minutes > 0
+                                ? isSelectedDay
+                                  ? 'bg-[#1B3B2F] dark:bg-[#A3D9C9]'
+                                  : 'bg-[#2B5A52] dark:bg-[#4E8C78]'
+                                : 'bg-transparent'
+                            }`}
+                            style={{ width: `${percent}%` }}
+                          />
+                        </div>
+
+                        <div className="text-right min-w-[65px]">
+                          <span
+                            className={`font-mono text-[11px] font-black ${
+                              dItem.minutes > 0
+                                ? 'text-[#1C2A24] dark:text-[#F2F7F4]'
+                                : 'text-[#8A9791] dark:text-[#6E8079]'
+                            }`}
+                          >
+                            {dItem.minutes > 0 ? formatStudyDuration(dItem.minutes) : '0m'}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="text-center py-2 text-xs text-[#576560] dark:text-[#8BA398]">
+                    No past 14-day history available.
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Owned Badges Section */}

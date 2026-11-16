@@ -474,9 +474,18 @@ router.post('/onboarding', requireAuth, async (req, res) => {
       user.studyStartDate = String(studyStartDate).trim();
     }
 
-    // Step 5: Weekly Off Day
-    if (weeklyOffDay !== undefined || restDay !== undefined) {
-      const offDayIndex = weeklyOffDay !== undefined ? Number(weeklyOffDay) : Number(restDay?.dayOfWeek ?? 0);
+    // Step 5: Weekly Off Day / Rest Day
+    if (restDay !== undefined) {
+      const isEnabled = typeof restDay === 'object' && restDay !== null && 'enabled' in restDay
+        ? Boolean(restDay.enabled)
+        : Boolean(restDay);
+      const offDayIndex = Number(restDay?.dayOfWeek ?? weeklyOffDay ?? user.restDay?.dayOfWeek ?? 0);
+      user.restDay = {
+        enabled: isEnabled,
+        dayOfWeek: Math.max(0, Math.min(6, isNaN(offDayIndex) ? 0 : offDayIndex)),
+      };
+    } else if (weeklyOffDay !== undefined) {
+      const offDayIndex = Number(weeklyOffDay);
       user.restDay = {
         enabled: true,
         dayOfWeek: Math.max(0, Math.min(6, isNaN(offDayIndex) ? 0 : offDayIndex)),
@@ -537,10 +546,14 @@ router.put('/study-preferences', requireAuth, async (req, res) => {
     }
     if (timezone) user.timezone = timezone;
     if (studyStartDate) user.studyStartDate = studyStartDate.trim();
-    if (restDay) {
+    if (restDay !== undefined) {
+      const isEnabled = typeof restDay === 'object' && restDay !== null && 'enabled' in restDay
+        ? Boolean(restDay.enabled)
+        : Boolean(restDay);
+      const offDayIndex = Number(restDay?.dayOfWeek ?? user.restDay?.dayOfWeek ?? 0);
       user.restDay = {
-        enabled: Boolean(restDay.enabled),
-        dayOfWeek: restDay.enabled ? Number(restDay.dayOfWeek ?? 0) : 0,
+        enabled: isEnabled,
+        dayOfWeek: Math.max(0, Math.min(6, isNaN(offDayIndex) ? 0 : offDayIndex)),
       };
     }
 

@@ -26,6 +26,7 @@ import {
 import { PetDisplay2D } from '../components/Sparky3DScene.jsx';
 import { StopwatchSaveModal } from '../components/StopwatchSaveModal.jsx';
 import { FocusActionConfirmModal } from '../components/FocusActionConfirmModal.jsx';
+import { FocusRewardSpotlight } from '../components/FocusRewardSpotlight.jsx';
 import { getSubjectColor } from '../utils/subjectColors.js';
 import { getStudyDayKey, getStudyDayDate, formatResetTimeDisplay } from '../utils/dateUtils.js';
 import { sounds } from '../audio/soundEffects.js';
@@ -1238,7 +1239,12 @@ export const FocusPage = ({
       } catch (e) {}
 
       onReload?.();
-      if (res?.user) {
+      if (res?.coinsEarned > 0) {
+        sounds.playCoinSound?.();
+      }
+      if (typeof res?.userCoins === 'number') {
+        onUserUpdate?.(res.userCoins);
+      } else if (res?.user) {
         onUserUpdate?.(res.user);
       }
     }
@@ -1515,15 +1521,9 @@ export const FocusPage = ({
             phaseTimeLeft: 0,
           });
 
-          // Check if entire daily quest goal was achieved right at interval boundary
-          if (remainingSecs === 0 && !isCompletingRef.current) {
-            if (handleCompleteRef.current) {
-              handleCompleteRef.current();
-            }
-          } else {
-            sounds.startAlarm?.();
-            setPomodoroAlert({ phase: 'focus', stage: 'ringing' });
-          }
+          // In Pomodoro mode, interval boundary transitions to break alert without auto-completing task
+          sounds.startAlarm?.();
+          setPomodoroAlert({ phase: 'focus', stage: 'ringing' });
           return;
         }
       }
@@ -1546,7 +1546,10 @@ export const FocusPage = ({
     setIntervalSeconds(currentInterval);
 
     if (remaining === 0 && !isCompletingRef.current) {
-      if (handleCompleteRef.current) {
+      if (focusStyleRef.current === 'pomodoro') {
+        sounds.startAlarm?.();
+        setPomodoroAlert({ phase: 'focus', stage: 'ringing' });
+      } else if (handleCompleteRef.current) {
         handleCompleteRef.current();
       }
     }
@@ -1638,9 +1641,14 @@ export const FocusPage = ({
           const now = Date.now();
           if (parsed.isRunning && !parsed.isPaused && parsed.sessionEndTimestamp) {
             if (now >= parsed.sessionEndTimestamp) {
-              if (!isCompletingRef.current && handleCompleteRef.current) {
-                handleCompleteRef.current();
-              }
+              // Cross-tab boundary reached: pause safely without auto-completing task
+              sessionEndTimestampRef.current = null;
+              activeSegmentStartRef.current = null;
+              isRunningRef.current = false;
+              isPausedRef.current = true;
+              setIsRunning(false);
+              setIsPaused(true);
+              setTimeLeft(0);
             } else {
               sessionEndTimestampRef.current = parsed.sessionEndTimestamp;
               activeSegmentStartRef.current = parsed.activeSegmentStartTimestamp || now;
@@ -1770,31 +1778,56 @@ export const FocusPage = ({
             phaseTimeLeft: 0,
           });
 
-          if (rem === 0 && !isCompletingRef.current) {
-            if (handleCompleteRef.current) {
-              handleCompleteRef.current();
-            }
-          } else {
-            sounds.startAlarm?.();
-            setPomodoroAlert({ phase: 'focus', stage: 'ringing' });
-          }
+          // In Pomodoro mode, interval boundary transitions to break alert without auto-completing task
+          sounds.startAlarm?.();
+          setPomodoroAlert({ phase: 'focus', stage: 'ringing' });
         } else if (now >= data.sessionEndTimestamp) {
-          // Finished while away: award coins, play alarm, present dialog
+          // Elapsed while away or offline: NEVER automatically complete the task or award completion coins!
+          // Restore safely in paused state with verified elapsed focus time ready for user review/action
+          const totalGoal = data.totalSeconds || (data.customMinutes ? data.customMinutes * 60 : 1500);
+          const verifiedAcc = Math.min(totalGoal, data.baseAccumulatedSeconds || 0);
+          const remainingSecs = Math.max(0, totalGoal - verifiedAcc);
+
           if (data.sessionId) {
             sessionIdRef.current = data.sessionId;
             setSessionId(data.sessionId);
           }
-          if (data.totalSeconds) {
-            setTotalSeconds(data.totalSeconds);
-            setAccumulatedSeconds(data.totalSeconds);
-            accumulatedElapsedRef.current = data.totalSeconds;
+          if (data.customMinutes) {
+            setCustomMinutes(data.customMinutes);
+            customMinutesRef.current = data.customMinutes;
           }
-          setTimeLeft(0);
+          setTotalSeconds(totalGoal);
+          totalSecondsRef.current = totalGoal;
+          setAccumulatedSeconds(verifiedAcc);
+          accumulatedElapsedRef.current = verifiedAcc;
+          baseAccumulatedRef.current = verifiedAcc;
+          setTimeLeft(remainingSecs);
+
+          isRunningRef.current = false;
+          isPausedRef.current = true;
+          setIsRunning(false);
+          setIsPaused(true);
           sessionEndTimestampRef.current = null;
-          clearTimerStorage();
-          if (handleCompleteRef.current) {
-            handleCompleteRef.current();
+          activeSegmentStartRef.current = null;
+          setPetFocusState('idle');
+
+          if (data.sessionId) {
+            api.pauseSession(data.sessionId, {
+              actualSeconds: verifiedAcc,
+              intervalSeconds: data.baseIntervalSeconds || 0,
+              isEarlyBreakConfirmed: false,
+            }).catch(() => {});
           }
+
+          syncTimerToStorage({
+            isRunning: false,
+            isPaused: true,
+            sessionEndTimestamp: null,
+            activeSegmentStartTimestamp: null,
+            baseAccumulatedSeconds: verifiedAcc,
+            baseIntervalSeconds: data.baseIntervalSeconds || 0,
+            timeLeft: remainingSecs,
+          });
         } else {
           // Still active: restore countdown seamlessly
           const remSecs = Math.max(0, Math.ceil((data.sessionEndTimestamp - now) / 1000));
@@ -4142,6 +4175,15 @@ export const FocusPage = ({
           </div>
         </div>
       </div>
+
+      {/* APPLE-STYLE REWARD SPOTLIGHT (Available when user scrolls down and has coins for unowned rewards) */}
+      <FocusRewardSpotlight
+        user={user}
+        pet={pet}
+        onUserUpdate={onUserUpdate}
+        onNavigate={onNavigate}
+        className="mt-6"
+      />
 
       {/* SECTION 2: 25-MINUTE BREAK PENALTY CONFIRMATION DIALOG (Mounted via Portal with z-[100000]) */}
       {showBreakConfirmation && typeof document !== 'undefined' && createPortal(
