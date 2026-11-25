@@ -22,6 +22,7 @@ import { RewardsPage } from './pages/RewardsPage.jsx';
 import { SettingsPage } from './pages/SettingsPage.jsx';
 import { WeeklyPlanPage } from './pages/WeeklyPlanPage.jsx';
 import { Landing } from './pages/Landing.jsx';
+import { OnboardingModal } from './components/OnboardingModal.jsx';
 import { sounds } from './audio/soundEffects.js';
 import { api } from './services/api.js';
 import { getPageFromPath, getPathForPage } from './utils/router.js';
@@ -192,16 +193,23 @@ export function App() {
 
   // Auth Success
   const handleAuthSuccess = (authenticatedUser) => {
+    if (!authenticatedUser) {
+      loadUserData();
+      return;
+    }
     setUser(authenticatedUser);
-    setPet(authenticatedUser.pet);
-    setShowAuthModal(false);
+    setPet(authenticatedUser.pet || null);
     loadUserData();
   };
 
   // Onboarding Complete
   const handleOnboardingComplete = (updatedUser) => {
+    if (!updatedUser) {
+      loadUserData();
+      return;
+    }
     setUser(updatedUser);
-    setPet(updatedUser.pet);
+    setPet(updatedUser.pet || null);
     loadUserData();
   };
 

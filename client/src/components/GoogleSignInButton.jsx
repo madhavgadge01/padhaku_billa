@@ -3,6 +3,14 @@ import { Loader2 } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import { GoogleAuth } from '@codetrix-studio/capacitor-google-auth';
 
+// Module-level GIS initialization guard so google.accounts.id.initialize()
+// is only invoked once per clientId across re-renders and modal switches.
+let initializedGisClientId = null;
+const activeGisCallbacks = {
+  onSuccess: null,
+  onError: null,
+};
+
 export const GoogleLogo = ({ className = 'w-5 h-5 flex-shrink-0' }) => (
   <svg className={className} viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
     <path
@@ -38,14 +46,21 @@ export const GoogleSignInButton = ({
   const isNative = Capacitor.isNativePlatform();
   const clientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID || '').trim();
 
-  // Initialize Capacitor Google Auth
+  // Keep latest callbacks synced without re-initializing Google Identity Services
   useEffect(() => {
+    activeGisCallbacks.onSuccess = onSuccess;
+    activeGisCallbacks.onError = onError;
+  }, [onSuccess, onError]);
+
+  // Initialize Capacitor Google Auth (Native platforms only)
+  useEffect(() => {
+    if (!isNative) return;
     GoogleAuth.initialize({
       clientId: '275129565298-o0durg4f3mug1ag03vquhll0r7n00onp.apps.googleusercontent.com',
       scopes: ['profile', 'email'],
       grantOfflineAccess: true,
     });
-  }, []);
+  }, [isNative]);
 
   // Login Button Handler
   const handleGoogleLogin = async () => {
@@ -92,18 +107,23 @@ export const GoogleSignInButton = ({
     const setupGoogleButton = () => {
       if (window.google?.accounts?.id && containerRef.current) {
         try {
-          window.google.accounts.id.initialize({
-            client_id: clientId,
-            callback: (response) => {
-              if (response && response.credential) {
-                onSuccess(response.credential);
-              } else {
-                if (onError) onError('Google Sign-In was cancelled or did not return a credential.');
-              }
-            },
-            auto_select: false,
-            cancel_on_tap_outside: true,
-          });
+          if (initializedGisClientId !== clientId) {
+            window.google.accounts.id.initialize({
+              client_id: clientId,
+              callback: (response) => {
+                if (response && response.credential) {
+                  activeGisCallbacks.onSuccess?.(response.credential);
+                } else {
+                  activeGisCallbacks.onError?.(
+                    'Google Sign-In was cancelled or did not return a credential.'
+                  );
+                }
+              },
+              auto_select: false,
+              cancel_on_tap_outside: true,
+            });
+            initializedGisClientId = clientId;
+          }
 
           // Clear any previous rendered button instance
           containerRef.current.innerHTML = '';
@@ -152,12 +172,30 @@ export const GoogleSignInButton = ({
         clearTimeout(timeoutId);
       };
     }
-  }, [clientId, text, isNative, onSuccess, onError]);
+  }, [clientId, text, isNative]);
 
   // Fallback handler if user clicks fallback button on web
   const handleFallbackClick = () => {
     if (loading) return;
-    handleGoogleLogin();
+    if (isNative) {
+      handleGoogleLogin();
+      return;
+    }
+
+    if (!clientId) {
+      onError?.('Google Client ID is not configured in environment variables.');
+      return;
+    }
+
+    if (window.google?.accounts?.id) {
+      window.google.accounts.id.prompt((notification) => {
+        if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+          containerRef.current?.firstChild?.click?.();
+        }
+      });
+    } else {
+      onError?.('Google Sign-In is still initializing. Please wait a moment.');
+    }
   };
 
   const buttonLabel =
